@@ -137,6 +137,7 @@ export class CombatWorld {
       position: new THREE.Vector3(0, 0, 5),
       hp: this.modifiers.maxHp,
       maxHp: this.modifiers.maxHp,
+      shield: 0,
       invulnerableUntil: 0,
       model: new THREE.Group()
     };
@@ -269,6 +270,7 @@ export class CombatWorld {
     this.comboTimer -= dt;
     if (this.comboTimer <= 0) this.combo = 0;
     this.movePlayer(dt);
+    this.updateEquipmentShield(dt);
     this.mechanics.update(dt);
     this.updateEnemies(dt);
     this.updateProjectiles(dt);
@@ -290,13 +292,24 @@ export class CombatWorld {
 
   movePlayer(dt) {
     const move = this.input.move;
-    const speed = this.modifiers.moveSpeed * this.mechanicMoveMultiplier * (this.elapsed < this.player.dodgeUntil ? 2.5 : 1);
+    const moveStrength = Math.hypot(move.x, move.y);
+    let gearMove = 1 + (this.modifiers.combatMoveSpeed ?? 0) + (this.modifiers.sprintSpeed ?? 0);
+    if (this.input.firing || this.input.keys.has('KeyJ')) gearMove += this.modifiers.moveSpeedWhileFiring ?? 0;
+    const speed = this.modifiers.moveSpeed * Math.max(0.3, gearMove) * this.mechanicMoveMultiplier * (this.elapsed < this.player.dodgeUntil ? 2.5 : 1);
     this.player.position.x += move.x * speed * dt;
     this.player.position.z += move.y * speed * dt;
     const radius = Math.hypot(this.player.position.x, this.player.position.z);
     if (radius > this.activeArenaLimit - 0.7) this.player.position.multiplyScalar((this.activeArenaLimit - 0.7) / radius);
     this.player.model.position.copy(this.player.position);
-    if (Math.hypot(move.x, move.y) > 0.1) this.player.model.rotation.y = Math.atan2(move.x, move.y);
+    if (moveStrength > 0.1) this.player.model.rotation.y = Math.atan2(move.x, move.y);
+  }
+
+  updateEquipmentShield(dt) {
+    if (!this.modifiers.stationaryShield) return;
+    const stationary = Math.hypot(this.input.move.x, this.input.move.y) < 0.1;
+    const target = stationary ? this.modifiers.stationaryShield : 0;
+    const rate = stationary ? Math.max(5, this.modifiers.stationaryShield * 0.32) : 15;
+    this.player.shield += Math.sign(target - this.player.shield) * Math.min(Math.abs(target - this.player.shield), rate * dt);
   }
 
   nearestEnemy() {
@@ -329,7 +342,8 @@ export class CombatWorld {
     const targetDirection = target.group.position.clone().sub(this.player.position).setY(0).normalize();
     const manual = this.input.aimActive;
     const alignment = manual ? aimDirection.dot(targetDirection) : 1;
-    if (alignment < 0.2 - this.settings.aimAssist * 0.35) return;
+    const homingAllowance = this.modifiers.homing ? 0.55 : 0;
+    if (alignment < 0.2 - this.settings.aimAssist * 0.35 - homingAllowance) return;
 
     const origin = this.player.position.clone().add(new THREE.Vector3(0, 1.2, 0));
     const end = target.group.position.clone().add(new THREE.Vector3(0, target.boss ? 1.6 : 0.85, 0));
@@ -350,9 +364,16 @@ export class CombatWorld {
     const broken = target.brokenUntil > this.elapsed;
     const gearHit = resolveShotModifiers(this.modifiers, this.elapsed, manual);
     const mechanicHit = this.mechanics.modifyHit(target, { weakPoint, manual });
-    const armorDamage = target.archetype.trait === 'frontArmor' && !weakPoint ? 0.34 : 1;
+    const armorDamage = target.archetype.trait === 'frontArmor' && !weakPoint ? 0.34 * Math.max(0.1, 1 + (this.modifiers.armorDamage ?? 0)) : 1;
     const armorBreak = target.archetype.trait === 'frontArmor' && !weakPoint ? 1.28 : 1;
-    const markMultiplier = target.markedUntil > this.elapsed ? 1.12 : 1;
+    const marked = target.markedUntil > this.elapsed;
+    const markMultiplier = marked ? 1.12 * (1 + (this.modifiers.markedDamage ?? 0)) : 1 + (this.modifiers.unmarkedDamage ?? 0);
+    const nearbyTargets = this.enemies.filter((enemy) => !enemy.dead && enemy.group.position.distanceTo(target.group.position) < 3.8).length;
+    const targetPatternMultiplier = nearbyTargets > 1 ? 1 + (this.modifiers.crowdDamage ?? 0) : 1 + (this.modifiers.singleTarget ?? 0);
+    const bodyMultiplier = weakPoint ? 1 : 1 + (this.modifiers.bodyDamage ?? 0);
+    const shieldMultiplier = this.player.shield <= 0.1 ? 1 + (this.modifiers.noShieldDamage ?? 0) : 1;
+    const ambushMultiplier = (target.receivedHits ?? 0) === 0 ? 1 + (this.modifiers.ambushDamage ?? 0) : 1;
+    const sustainedMultiplier = this.combo >= 6 ? 1 + (this.modifiers.sustainedFire ?? 0) : 1;
     let characterDamage = 1;
     let characterBreak = 1;
     const moving = Math.hypot(this.input.move.x, this.input.move.y) > 0.2;
@@ -365,7 +386,7 @@ export class CombatWorld {
     if (this.character.id === 'yura' && this.characterState.ambushUntil > this.elapsed) characterDamage *= 1.5;
     if (this.character.id === 'neko' && moving) characterDamage *= this.characterState.rushUntil > this.elapsed ? 1.34 : 1.2;
     if (this.character.id === 'mora' && target.controlUntil > this.elapsed) characterBreak *= 1.35;
-    const damage = this.modifiers.damage * (weakPoint ? 1.35 : 1) * (broken ? 2.2 : 1) * gearHit.damageMultiplier * mechanicHit.hpMultiplier * armorDamage * markMultiplier * characterDamage;
+    const damage = this.modifiers.damage * (weakPoint ? 1.35 : 1) * (broken ? 2.2 : 1) * gearHit.damageMultiplier * mechanicHit.hpMultiplier * armorDamage * markMultiplier * targetPatternMultiplier * bodyMultiplier * shieldMultiplier * ambushMultiplier * sustainedMultiplier * characterDamage;
     const breakDamage = this.modifiers.breakDamage * (weakPoint ? 1.2 : 1) * gearHit.breakMultiplier * mechanicHit.breakMultiplier * armorBreak * characterBreak;
     return { damage, breakDamage, weakPoint, manual };
   }
@@ -374,7 +395,9 @@ export class CombatWorld {
     if (!target || target.dead) return;
     target.hp -= hit.damage;
     target.break -= hit.breakDamage;
+    target.receivedHits = (target.receivedHits ?? 0) + 1;
     this.applyCharacterShotEffect(target, hit);
+    if (primary) this.applyEquipmentShotEffects(target, hit);
     if (primary) this.stats.hits += 1;
     this.combo += 1;
     this.comboTimer = 1.4;
@@ -389,6 +412,10 @@ export class CombatWorld {
       target.brokenUntil = this.elapsed + 3.6;
       target.break = target.maxBreak;
       this.stats.breaks += 1;
+      if (this.modifiers.breakShield) {
+        const shieldCap = Math.max(this.modifiers.breakShield, this.modifiers.stationaryShield ?? 0);
+        this.player.shield = Math.min(shieldCap, this.player.shield + this.modifiers.breakShield);
+      }
       this.score += 500;
       this.pulse(target.group.position, '#53f6d6', 2.6);
       this.root.classList.add('break-hit');
@@ -403,7 +430,8 @@ export class CombatWorld {
 
   applyCharacterShotEffect(target, hit) {
     this.characterState.shotCounter += 1;
-    if (this.character.id === 'miku' && this.characterState.shotCounter % 8 === 0) {
+    const resonanceInterval = this.modifiers.resonance ? 6 : 8;
+    if (this.character.id === 'miku' && this.characterState.shotCounter % resonanceInterval === 0) {
       let chainTarget = null;
       let distance = Infinity;
       for (const enemy of this.enemies) {
@@ -428,7 +456,7 @@ export class CombatWorld {
       target.core.material.color.set('#53f6d6');
     }
     if (this.character.id === 'serin' && this.characterState.shotCounter % 12 === 0) {
-      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2.5);
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2.5 * this.healingMultiplier());
     }
     if (this.character.id === 'mora') {
       target.controlUntil = Math.max(target.controlUntil ?? 0, this.elapsed + 0.45);
@@ -461,6 +489,28 @@ export class CombatWorld {
       const away = target.group.position.clone().sub(this.player.position).setY(0).normalize();
       target.group.position.addScaledVector(away, target.boss ? 0.15 : 0.42);
     }
+  }
+
+  applyEquipmentShotEffects(target, hit) {
+    const candidates = this.enemies
+      .filter((enemy) => !enemy.dead && enemy !== target && enemy.targetable)
+      .sort((a, b) => a.group.position.distanceToSquared(target.group.position) - b.group.position.distanceToSquared(target.group.position));
+    const secondaryHits = [];
+    if (this.modifiers.spread) secondaryHits.push(...candidates.filter((enemy) => enemy.group.position.distanceTo(target.group.position) <= 3.6).slice(0, 3));
+    if (this.modifiers.pierce && candidates[0]) secondaryHits.push(candidates[0]);
+    if (this.modifiers.chainTargets) secondaryHits.push(...candidates.slice(0, Math.max(1, Math.round(this.modifiers.chainTargets))));
+    for (const enemy of [...new Set(secondaryHits)]) {
+      const chainScale = this.modifiers.chainTargets ? 0.48 : this.modifiers.pierce ? 0.62 : 0.34;
+      enemy.hp -= hit.damage * chainScale;
+      enemy.break -= hit.breakDamage * (this.modifiers.spread ? 0.52 : 0.34);
+      this.createTracer(target.group.position.clone().setY(0.9), enemy.group.position.clone().setY(0.9));
+      if (enemy.hp <= 0) this.killEnemy(enemy);
+    }
+  }
+
+  healingMultiplier() {
+    const lowHp = this.player.hp / this.player.maxHp < 0.5;
+    return Math.max(0.1, 1 + (this.modifiers.selfHealing ?? 0) + (lowHp ? this.modifiers.lowHpHealing ?? 0 : 0));
   }
 
   launchPlayerProjectile(origin, target, hit) {
@@ -712,10 +762,20 @@ export class CombatWorld {
     if (!this.running || this.elapsed <= this.player.invulnerableUntil) return 0;
     const cleanseMultiplier = type === 'hazard' && this.characterState.cleanseUntil > this.elapsed ? 0.4 : 1;
     const guardMultiplier = this.character.id === 'sora' && this.characterState.guardUntil > this.elapsed ? 0.34 : 1;
-    const damage = resolveIncomingDamage(amount * cleanseMultiplier * guardMultiplier, this.modifiers, {
+    let damage = resolveIncomingDamage(amount * cleanseMultiplier * guardMultiplier, this.modifiers, {
       type,
       moveStrength: Math.hypot(this.input?.move.x ?? 0, this.input?.move.y ?? 0)
     });
+    if (this.player.shield > 0) {
+      const efficiency = Math.max(0.25, 1 + (this.modifiers.shieldEfficiency ?? 0));
+      const absorbed = Math.min(damage, this.player.shield * efficiency);
+      this.player.shield = Math.max(0, this.player.shield - absorbed / efficiency);
+      damage -= absorbed;
+    }
+    if (damage <= 0.01) {
+      this.player.invulnerableUntil = this.elapsed + Math.min(0.18, invulnerability);
+      return 0;
+    }
     this.player.hp = Math.max(0, this.player.hp - damage);
     this.stats.damageTaken += damage;
     this.player.invulnerableUntil = this.elapsed + invulnerability;
@@ -768,6 +828,7 @@ export class CombatWorld {
       wave: this.currentWave,
       totalWaves: this.stage.waves,
       mechanic: this.mechanics.hud(),
+      shield: this.player.shield,
       skillCooldown: Math.max(0, this.skillReadyAt - this.elapsed),
       dodgeCooldown: Math.max(0, this.dodgeReadyAt - this.elapsed)
     });
@@ -775,7 +836,8 @@ export class CombatWorld {
 
   dodge() {
     if (this.elapsed < this.dodgeReadyAt) return;
-    this.dodgeReadyAt = this.elapsed + 2.4 * this.modifiers.dodgeCooldown;
+    const chargePenalty = this.modifiers.dodgeCharges < 0 ? 1 + Math.abs(this.modifiers.dodgeCharges) * 0.45 : 1;
+    this.dodgeReadyAt = this.elapsed + 2.4 * this.modifiers.dodgeCooldown * chargePenalty;
     this.player.invulnerableUntil = this.elapsed + (this.modifiers.perfectDodge ? 0.48 : 0.38);
     this.player.dodgeUntil = this.elapsed + 0.24 * this.modifiers.dodgeDistance;
     this.pulse(this.player.position, '#a1fbe8', 1.2);
@@ -791,7 +853,9 @@ export class CombatWorld {
 
   castSkill() {
     if (this.elapsed < this.skillReadyAt) return;
-    this.skillReadyAt = this.elapsed + this.character.skill.cooldown * (1 + (this.modifiers.normalCooldown ?? 0)) * this.mechanics.skillCooldownMultiplier();
+    const environmentActive = ['hazard', 'force', 'safeZone', 'phase'].some((behavior) => this.mechanics.behaviors.has(behavior));
+    const weatherScale = environmentActive ? Math.max(0.35, 1 - (this.modifiers.weatherCooldown ?? 0)) : 1;
+    this.skillReadyAt = this.elapsed + this.character.skill.cooldown * (1 + (this.modifiers.normalCooldown ?? 0)) * weatherScale * this.mechanics.skillCooldownMultiplier();
     this.audio.play('skill');
     if (this.character.id === 'nari') {
       this.mechanics.assistObjective();
@@ -801,7 +865,7 @@ export class CombatWorld {
       return;
     }
     if (this.character.id === 'serin') {
-      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 36 * this.modifiers.skillPower);
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 36 * this.modifiers.skillPower * this.healingMultiplier());
       this.characterState.cleanseUntil = this.elapsed + 5.5;
       this.pulse(this.player.position, '#8dffc2', 5.2);
       this.score += 220;
@@ -870,7 +934,7 @@ export class CombatWorld {
     }
     if (this.character.id === 'sora') {
       this.characterState.guardUntil = this.elapsed + 6;
-      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 18);
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 18 * this.healingMultiplier());
       this.pulse(this.player.position, '#5fb8ff', 5.5);
       return;
     }

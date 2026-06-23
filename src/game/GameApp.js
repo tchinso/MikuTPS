@@ -1,8 +1,9 @@
 import { characters, characterById } from '../data/characters.js';
 import { chapters, stages, stageById } from '../data/stages.js';
-import { equipment, equipmentById, EQUIPMENT_SLOTS } from '../data/equipment.js';
+import { equipment, equipmentById, EQUIPMENT_SLOTS, getEquipmentFit } from '../data/equipment.js';
 import { auditOrthogonality } from '../systems/orthogonality.js';
 import { auditSimulatedBalance } from '../systems/balanceSimulator.js';
+import { auditEquipmentOrthogonality } from '../systems/equipmentOrthogonality.js';
 import { canFullscreen, enterFullscreen, getFullscreenElement, leaveFullscreen } from '../systems/fullscreen.js';
 import { applyStageResult, createDefaultSave, exportSave, importSave, loadSave, persistSave, SAVE_KEY } from '../systems/storage.js';
 
@@ -16,9 +17,10 @@ export class GameApp {
     this.screen = 'home';
     this.selectedChapter = 1;
     this.equipmentFilter = 'all';
-    this.equipmentSort = 'name';
+    this.equipmentSort = 'fit';
     this.audit = auditOrthogonality();
     this.balanceAudit = auditSimulatedBalance();
+    this.equipmentAudit = auditEquipmentOrthogonality();
     this.onClick = (event) => this.handleClick(event);
     this.onChange = (event) => this.handleChange(event);
     this.onFullscreenChange = () => this.syncFullscreenButton();
@@ -83,6 +85,7 @@ export class GameApp {
 
   homeTemplate() {
     const selected = characterById[this.save.selectedCharacter] ?? characters[0];
+    const loadoutFit = this.loadoutAffinity(selected.id);
     const cleared = Object.values(this.save.stages).filter((result) => result.cleared).length;
     const campaignComplete = cleared >= stages.length;
     const nextStage = stages.find((stage) => this.isStageUnlocked(stage) && !this.save.stages[stage.id]?.cleared) ?? stages.at(-1);
@@ -108,7 +111,7 @@ export class GameApp {
         <article class="character-card">
           <div class="card-label">ACTIVE OPERATOR</div>
           <div class="character-sigil">${selected.codename.slice(0, 1)}</div>
-          <div><h2>${selected.name}</h2><p>${selected.codename} · ${selected.role}</p><small>${selected.strengths.join(' / ')}</small></div>
+          <div><h2>${selected.name}</h2><p>${selected.codename} · ${selected.role}</p><small>${selected.strengths.join(' / ')}</small><em class="loadout-affinity ${loadoutFit.weak ? 'has-conflict' : ''}">장비 최적 ${loadoutFit.strong} · 역상성 ${loadoutFit.weak}</em></div>
           <button data-nav="roster" aria-label="캐릭터 변경">변경</button>
         </article>
         <article class="orthogonality-card">
@@ -150,6 +153,7 @@ export class GameApp {
 
   rosterTemplate() {
     const selected = characterById[this.save.selectedCharacter];
+    const loadoutFit = this.loadoutAffinity(selected.id);
     return `
       <section class="content-page roster-page">
         <div class="page-heading"><div><p class="eyebrow">TOOLS, NOT TIERS</p><h1>오퍼레이터 로스터</h1><p>각 캐릭터는 다른 문제를 풉니다. 강점과 약점은 강화해도 사라지지 않습니다.</p></div><div class="campaign-count"><b>${this.save.unlockedCharacters.length}</b><span>/ 13 해금</span></div></div>
@@ -162,6 +166,7 @@ export class GameApp {
             <p>${selected.passive}</p>
             <div class="strengths"><span>강점</span>${selected.strengths.map((value) => `<b>${value}</b>`).join('')}<span>약점</span><em>${selected.weakness}</em></div>
             <div class="skill-callout"><i>ACTIVE</i><div><b>${selected.skill.name}</b><p>${selected.skill.description}</p></div><span>${selected.skill.cooldown}s</span></div>
+            <div class="loadout-affinity-summary ${loadoutFit.weak ? 'has-conflict' : ''}"><b>현재 장비 궁합</b><span>최적 ${loadoutFit.strong} · 중립 ${loadoutFit.neutral} · 역상성 ${loadoutFit.weak}</span>${loadoutFit.weak ? '<em>공방에서 붉은 장비를 교체해야 역할 성능이 회복됩니다.</em>' : ''}</div>
             <div class="axis-detail">${Object.entries(selected.axes).map(([axis, value]) => `<div><span>${axis}</span><i><b style="width:${value * 20}%"></b></i><em>${value}</em></div>`).join('')}</div>
           </aside>
         </div>
@@ -187,10 +192,11 @@ export class GameApp {
   }
 
   workshopTemplate() {
+    const selected = characterById[this.save.selectedCharacter] ?? characters[0];
     return `
       <section class="content-page workshop-page">
-        <div class="page-heading"><div><p class="eyebrow">SIDEGRADES, NOT POWER CREEP</p><h1>공명 공방</h1><p>장비는 문제를 바꾸는 대신 새로운 대가를 만듭니다. 최대 강화는 5단계입니다.</p></div><div class="loadout-mini">${EQUIPMENT_SLOTS.map((slot) => `<span><small>${slotNames[slot]}</small><b>${equipmentById[this.save.loadout[slot]].name}</b></span>`).join('')}</div></div>
-        <div class="inventory-tools"><div><button data-equipment-filter="all" class="${this.equipmentFilter === 'all' ? 'active' : ''}">전체</button><button data-equipment-filter="owned" class="${this.equipmentFilter === 'owned' ? 'active' : ''}">보유</button><button data-equipment-filter="blueprint" class="${this.equipmentFilter === 'blueprint' ? 'active' : ''}">미보유 설계</button></div><label>정렬 <select data-equipment-sort><option value="name" ${this.equipmentSort === 'name' ? 'selected' : ''}>이름</option><option value="level" ${this.equipmentSort === 'level' ? 'selected' : ''}>강화 단계</option><option value="cost" ${this.equipmentSort === 'cost' ? 'selected' : ''}>기본 비용</option></select></label></div>
+        <div class="page-heading"><div><p class="eyebrow">EXTREME ORTHOGONAL LOADOUTS</p><h1>공명 공방</h1><p>${selected.name} 기준 궁합입니다. 최적 공명은 효과 180%·대가 70%, 역상성은 효과 15%·대가 200%와 추가 페널티를 받습니다.</p></div><div class="loadout-mini">${EQUIPMENT_SLOTS.map((slot) => { const item = equipmentById[this.save.loadout[slot]]; const fit = getEquipmentFit(item, selected.id); return `<span class="fit-${fit.tier}"><small>${slotNames[slot]} · ${fit.label}</small><b>${item.name}</b></span>`; }).join('')}</div></div>
+        <div class="inventory-tools"><div><button data-equipment-filter="all" class="${this.equipmentFilter === 'all' ? 'active' : ''}">전체</button><button data-equipment-filter="owned" class="${this.equipmentFilter === 'owned' ? 'active' : ''}">보유</button><button data-equipment-filter="blueprint" class="${this.equipmentFilter === 'blueprint' ? 'active' : ''}">미보유 설계</button></div><label>정렬 <select data-equipment-sort><option value="fit" ${this.equipmentSort === 'fit' ? 'selected' : ''}>${selected.name} 궁합</option><option value="name" ${this.equipmentSort === 'name' ? 'selected' : ''}>이름</option><option value="level" ${this.equipmentSort === 'level' ? 'selected' : ''}>강화 단계</option><option value="cost" ${this.equipmentSort === 'cost' ? 'selected' : ''}>기본 비용</option></select></label></div>
         ${EQUIPMENT_SLOTS.map((slot) => { const items = this.filteredEquipment(slot); return `<section class="equipment-section"><div class="section-heading"><div><span>${slot.toUpperCase()}</span><h2>${slotNames[slot]}</h2></div><small>${items.length}개 표시</small></div><div class="equipment-grid">${items.length ? items.map((item) => this.equipmentCard(item)).join('') : '<p class="empty-equipment">이 조건에 맞는 장비가 없습니다.</p>'}</div></section>`; }).join('')}
       </section>`;
   }
@@ -202,6 +208,10 @@ export class GameApp {
       return this.equipmentFilter === 'all' || (this.equipmentFilter === 'owned' ? owned : !owned);
     });
     return items.sort((a, b) => {
+      if (this.equipmentSort === 'fit') {
+        const rank = { strong: 2, neutral: 1, weak: 0 };
+        return rank[getEquipmentFit(b, this.save.selectedCharacter).tier] - rank[getEquipmentFit(a, this.save.selectedCharacter).tier] || a.name.localeCompare(b.name, 'ko');
+      }
       if (this.equipmentSort === 'level') return (this.save.ownedEquipment[b.id]?.level ?? -1) - (this.save.ownedEquipment[a.id]?.level ?? -1) || a.name.localeCompare(b.name, 'ko');
       if (this.equipmentSort === 'cost') return a.enhancement.baseCost - b.enhancement.baseCost || a.name.localeCompare(b.name, 'ko');
       return a.name.localeCompare(b.name, 'ko');
@@ -213,10 +223,15 @@ export class GameApp {
     const equipped = this.save.loadout[item.slot] === item.id;
     const level = owned?.level ?? 0;
     const cost = Math.round(item.enhancement.baseCost * item.enhancement.growth ** level);
-    return `<article class="equipment-card ${equipped ? 'equipped' : ''}">
+    const fit = getEquipmentFit(item, this.save.selectedCharacter);
+    const strongNames = item.affinity.strong.map((id) => characterById[id].name).join(' · ');
+    const weakNames = item.affinity.weak.map((id) => characterById[id].name).join(' · ');
+    return `<article class="equipment-card fit-${fit.tier} ${equipped ? 'equipped' : ''}">
       <div class="equipment-icon">${item.slot === 'weapon' ? '⌁' : item.slot === 'armor' ? '⬡' : item.slot === 'shoes' ? '≫' : '◈'}</div>
       <div><small>${equipped ? 'EQUIPPED' : owned ? `LEVEL ${level}` : 'BLUEPRINT'}</small><h3>${item.name}</h3><p>${item.description}</p></div>
-      <dl><dt>효과</dt><dd>${Object.entries(item.effect).map(([key, value]) => `${key} ${typeof value === 'number' && value < 1 ? `+${Math.round(value * 100)}%` : value}`).join(' · ')}</dd><dt>대가</dt><dd>${Object.entries(item.drawback).map(([key, value]) => `${key} ${Math.round(value * 100)}%`).join(' · ')}</dd></dl>
+      <div class="fit-callout"><strong>${fit.label} · 효과 ×${fit.effectScale} / 대가 ×${fit.drawbackScale}</strong><span>${fit.reason}</span></div>
+      <dl><dt>효과</dt><dd>${Object.entries(item.effect).map(([key, value]) => `${key} ${typeof value === 'number' && Math.abs(value) < 1 ? `${value >= 0 ? '+' : ''}${Math.round(value * 100)}%` : value}`).join(' · ')}</dd><dt>대가</dt><dd>${Object.entries(item.drawback).map(([key, value]) => `${key} ${Math.round(value * 100)}%`).join(' · ')}</dd></dl>
+      <div class="affinity-map"><b>◎ ${strongNames}</b><em>× ${weakNames}</em></div>
       <div class="equipment-actions">${owned ? `<button data-equip="${item.id}" ${equipped ? 'disabled' : ''}>${equipped ? '장착 중' : '장착'}</button><button data-upgrade="${item.id}" ${level >= item.enhancement.max ? 'disabled' : ''}>${level >= item.enhancement.max ? 'MAX' : `강화 ${cost} C`}</button><button data-lock-equipment="${item.id}" aria-label="${item.name} ${owned.locked ? '잠금 해제' : '잠금'}">${owned.locked ? '◆' : '◇'}</button>` : `<button data-buy="${item.id}">설계 구매 ${cost} C</button>`}</div>
     </article>`;
   }
@@ -234,7 +249,7 @@ export class GameApp {
             <label class="toggle"><span>지원 기기 햅틱</span><input data-setting="haptics" type="checkbox" ${this.save.settings.haptics ? 'checked' : ''}></label>
           </article>
           <article><h2>진행 데이터</h2><p>세이브 버전 ${this.save.version} · 마지막 저장 ${new Date(this.save.updatedAt).toLocaleString('ko-KR')}</p><textarea id="save-transfer" placeholder="내보낸 세이브 문자열을 붙여넣으세요."></textarea><div class="settings-actions"><button data-save-export>내보내기</button><button data-save-import>가져오기</button><button class="danger" data-save-reset>진행 초기화</button></div></article>
-          <article><h2>직교성 검사</h2><strong class="${this.audit.ok && this.balanceAudit.ok ? 'audit-ok' : 'audit-fail'}">${this.audit.ok && this.balanceAudit.ok ? '정적·모의 밸런스 규칙 통과' : '검사 필요'}</strong><p>추천 채용 횟수: ${Object.values(this.audit.usage).join(' · ')}</p><p>모의 최적 비율: ${Object.entries(this.balanceAudit.winnerShare).filter(([, share]) => share > 0).map(([id, share]) => `${id} ${Math.round(share * 100)}%`).join(' · ') || '공동 최적 분산'}</p>${[...this.audit.issues, ...this.balanceAudit.issues].length ? `<ul>${[...this.audit.issues, ...this.balanceAudit.issues].map((issue) => `<li>${issue}</li>`).join('')}</ul>` : '<p>모든 스테이지에 두 가지 이상의 모의 해법이 있고, 미쿠 대체 공략과 30% 최적해 상한을 만족합니다.</p>'}</article>
+          <article><h2>직교성 검사</h2><strong class="${this.audit.ok && this.balanceAudit.ok && this.equipmentAudit.ok ? 'audit-ok' : 'audit-fail'}">${this.audit.ok && this.balanceAudit.ok && this.equipmentAudit.ok ? '캐릭터·스테이지·장비 규칙 통과' : '검사 필요'}</strong><p>추천 채용 횟수: ${Object.values(this.audit.usage).join(' · ')}</p><p>모의 최적 비율: ${Object.entries(this.balanceAudit.winnerShare).filter(([, share]) => share > 0).map(([id, share]) => `${id} ${Math.round(share * 100)}%`).join(' · ') || '공동 최적 분산'}</p><p>장비 수: ${EQUIPMENT_SLOTS.map((slot) => `${slotNames[slot]} ${this.equipmentAudit.slotCounts[slot]}`).join(' · ')} · 모든 캐릭터/슬롯에 최적·역상성 존재</p>${[...this.audit.issues, ...this.balanceAudit.issues, ...this.equipmentAudit.issues].length ? `<ul>${[...this.audit.issues, ...this.balanceAudit.issues, ...this.equipmentAudit.issues].map((issue) => `<li>${issue}</li>`).join('')}</ul>` : '<p>모든 스테이지에 복수 해법이 있고, 어느 장비도 모든 캐릭터의 범용 최적해가 될 수 없습니다.</p>'}</article>
         </div>
       </section>`;
   }
@@ -284,7 +299,7 @@ export class GameApp {
     set('[data-hud-objective-label]', hud.mechanic.label);
     set('[data-hud-objective]', hud.mechanic.value);
     set('[data-hud-time]', this.formatTime(hud.elapsed));
-    set('[data-hud-hp-text]', `${Math.ceil(hud.hp)} / ${hud.maxHp}`);
+    set('[data-hud-hp-text]', `${Math.ceil(hud.hp)} / ${Math.ceil(hud.maxHp)}${hud.shield > 0.5 ? ` + ${Math.ceil(hud.shield)} SHIELD` : ''}`);
     set('[data-skill-cooldown]', hud.skillCooldown > 0 ? hud.skillCooldown.toFixed(1) : 'READY');
     set('[data-dodge-cooldown]', hud.dodgeCooldown > 0 ? hud.dodgeCooldown.toFixed(1) : 'READY');
     const hp = this.root.querySelector('[data-hud-hp]');
@@ -320,7 +335,8 @@ export class GameApp {
     const characterId = event.target.closest('[data-character-select]')?.dataset.characterSelect;
     if (characterId) {
       this.save = persistSave({ ...this.save, selectedCharacter: characterId });
-      this.toast(`${characterById[characterId].name} 선택`);
+      const fit = this.loadoutAffinity(characterId);
+      this.toast(`${characterById[characterId].name} 선택 · 최적 ${fit.strong} / 역상성 ${fit.weak}`);
       return this.showScreen('roster');
     }
     const buyId = event.target.closest('[data-buy]')?.dataset.buy;
@@ -434,6 +450,14 @@ export class GameApp {
     const parts = this.root.querySelector('[data-parts]');
     if (credits) credits.textContent = this.save.credits.toLocaleString();
     if (parts) parts.textContent = this.save.parts.toLocaleString();
+  }
+
+  loadoutAffinity(characterId) {
+    return Object.values(this.save.loadout).reduce((summary, id) => {
+      const item = equipmentById[id];
+      if (item) summary[getEquipmentFit(item, characterId).tier] += 1;
+      return summary;
+    }, { strong: 0, neutral: 0, weak: 0 });
   }
 
   formatTime(seconds) {

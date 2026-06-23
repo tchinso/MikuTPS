@@ -257,7 +257,7 @@ export class StageMechanicDirector {
         if (requiresHold) node.userData.hold = Math.max(0, node.userData.hold - dt * 0.45);
         continue;
       }
-      node.userData.hold += dt;
+      node.userData.hold += dt * (1 + (this.world.modifiers.objectiveSpeed ?? 0));
       const characterScale = this.world.character.id === 'nari' ? 0.55 : 1;
       if (!requiresHold || node.userData.hold >= (this.rule.holdSeconds ?? 0) * characterScale) this.captureNode(node);
     }

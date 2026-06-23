@@ -4,10 +4,11 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { assetManifest, duplicateAssets } from '../src/data/assets.js';
 import { AXES, characters } from '../src/data/characters.js';
-import { equipment, EQUIPMENT_SLOTS, starterLoadout } from '../src/data/equipment.js';
+import { equipment, EQUIPMENT_SLOTS, getEquipmentFit, starterEquipmentIds, starterLoadout } from '../src/data/equipment.js';
 import { stages } from '../src/data/stages.js';
 import { auditOrthogonality } from '../src/systems/orthogonality.js';
 import { auditSimulatedBalance } from '../src/systems/balanceSimulator.js';
+import { auditEquipmentOrthogonality } from '../src/systems/equipmentOrthogonality.js';
 import { applyStageResult, createDefaultSave, exportSave, importSave, migrateSave } from '../src/systems/storage.js';
 
 describe('campaign content', () => {
@@ -74,12 +75,32 @@ describe('orthogonality contract', () => {
 
   it('keeps equipment as bounded tradeoffs in all four slots', () => {
     expect(new Set(equipment.map((item) => item.slot))).toEqual(new Set(EQUIPMENT_SLOTS));
-    for (const slot of EQUIPMENT_SLOTS) expect(equipment.filter((item) => item.slot === slot).length).toBeGreaterThanOrEqual(6);
+    for (const slot of EQUIPMENT_SLOTS) expect(equipment.filter((item) => item.slot === slot).length).toBeGreaterThanOrEqual(8);
     for (const item of equipment) {
       expect(Object.keys(item.effect).length).toBeGreaterThan(0);
       expect(Object.keys(item.drawback).length).toBeGreaterThan(0);
       expect(item.enhancement.max).toBeLessThanOrEqual(5);
+      expect(item.affinity.strong.length).toBeGreaterThanOrEqual(3);
+      expect(item.affinity.weak.length).toBeGreaterThanOrEqual(3);
+      expect(item.affinity.strong.some((id) => item.affinity.weak.includes(id))).toBe(false);
     }
+  });
+
+  it('gives every operator both a best-fit and a truly bad choice in every slot', () => {
+    for (const character of characters) {
+      for (const slot of EQUIPMENT_SLOTS) {
+        const slotItems = equipment.filter((item) => item.slot === slot);
+        expect(slotItems.some((item) => getEquipmentFit(item, character.id).tier === 'strong'), `${character.id}/${slot} strong`).toBe(true);
+        expect(slotItems.some((item) => getEquipmentFit(item, character.id).tier === 'weak'), `${character.id}/${slot} weak`).toBe(true);
+      }
+    }
+  });
+
+  it('passes the equipment orthogonality audit without a universal best item', () => {
+    const audit = auditEquipmentOrthogonality();
+    expect(audit.ok).toBe(true);
+    expect(audit.issues).toEqual([]);
+    expect(Object.values(audit.slotCounts)).toEqual([8, 8, 8, 8]);
   });
 });
 
@@ -110,6 +131,16 @@ describe('save progression', () => {
     expect(importSave(exportSave(save)).credits).toBe(321);
     expect(migrateSave({ version: 1 }).loadout.weapon).toBeTruthy();
     expect(migrateSave({ version: 1, telemetry: { characterRuns: { miku: 3 } } }).telemetry.characterRuns.miku.runs).toBe(3);
+  });
+
+  it('starts and migrates with three tactical choices in every equipment slot', () => {
+    expect(starterEquipmentIds).toHaveLength(12);
+    for (const candidate of [createDefaultSave(), migrateSave({ version: 2, ownedEquipment: {} })]) {
+      for (const slot of EQUIPMENT_SLOTS) {
+        const ownedInSlot = equipment.filter((item) => item.slot === slot && candidate.ownedEquipment[item.id]);
+        expect(ownedInSlot, slot).toHaveLength(3);
+      }
+    }
   });
 
   it('grants first-clear rewards once and records telemetry', () => {

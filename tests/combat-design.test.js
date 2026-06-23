@@ -70,6 +70,25 @@ describe('equipment changes combat rules', () => {
     expect(onBeat.breakMultiplier).toBeGreaterThan(offBeat.breakMultiplier);
     expect(offBeat.damageMultiplier).toBeLessThan(1);
   });
+
+  it('makes a strong pairing dramatically better than an anti-synergy pairing', () => {
+    const strong = resolveCombatModifiers(characterById.roa, { weapon: 'tempo-lance' });
+    const weak = resolveCombatModifiers(characterById.miku, { weapon: 'tempo-lance' });
+    const strongDamageRatio = strong.damage / characterById.roa.stats.damage;
+    const weakDamageRatio = weak.damage / characterById.miku.stats.damage;
+    expect(strong.affinitySummary).toMatchObject({ strong: 1, weak: 0 });
+    expect(weak.affinitySummary).toMatchObject({ strong: 0, weak: 1 });
+    expect(strongDamageRatio).toBeGreaterThan(weakDamageRatio * 1.7);
+    expect(weak.normalCooldown).toBeGreaterThan(0);
+  });
+
+  it('withholds binary mechanics from an incompatible operator', () => {
+    const strong = resolveCombatModifiers(characterById.roa, { weapon: 'needle-rail' });
+    const weak = resolveCombatModifiers(characterById.marin, { weapon: 'needle-rail' });
+    expect(strong.pierce).toBe(1);
+    expect(weak.pierce).toBeUndefined();
+    expect(weak.moveSpeedWhileFiring).toBeLessThan(strong.moveSpeedWhileFiring);
+  });
 });
 
 describe('mobile adaptive quality', () => {

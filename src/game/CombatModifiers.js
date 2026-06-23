@@ -1,4 +1,4 @@
-import { equipmentById } from '../data/equipment.js';
+import { equipmentById, getEquipmentFit } from '../data/equipment.js';
 
 const additiveKeys = new Set([
   'fireRate', 'breakDamage', 'range', 'weakPoint', 'crowdDamage', 'singleTarget', 'moveSpeedWhileFiring',
@@ -6,6 +6,10 @@ const additiveKeys = new Set([
   'movingDamageReduction', 'stationaryDamageTaken', 'hazardReduction', 'lowHpHealing', 'dodgeDistance',
   'turnRate', 'sprintSpeed', 'dodgeCooldown', 'combatMoveSpeed', 'sustainedFire', 'critRate', 'normalCooldown',
   'selfHealing', 'shieldEfficiency', 'noShieldDamage', 'objectiveSpeed', 'knockbackResist'
+]);
+const binaryKeys = new Set([
+  'resonance', 'spread', 'pierce', 'homing', 'terrainGrip', 'perfectDodge', 'dodgeKnockback',
+  'reflectPreview', 'hiddenWeakPoint'
 ]);
 
 export function resolveCombatModifiers(character, loadoutIds, ownedEquipment = {}) {
@@ -20,7 +24,8 @@ export function resolveCombatModifiers(character, loadoutIds, ownedEquipment = {
     dodgeCooldown: 1,
     skillPower: 1,
     effects: [],
-    drawbacks: []
+    drawbacks: [],
+    equipmentFit: []
   };
 
   for (const id of Object.values(loadoutIds ?? {})) {
@@ -28,21 +33,36 @@ export function resolveCombatModifiers(character, loadoutIds, ownedEquipment = {
     if (!item) continue;
     const level = ownedEquipment[id]?.level ?? 0;
     const enhancementScale = 1 + level * 0.06;
-    applyMap(modifiers, item.effect, enhancementScale, false);
-    applyMap(modifiers, item.drawback, 1, true);
+    const fit = getEquipmentFit(item, character.id);
+    applyMap(modifiers, item.effect, fit.effectScale * enhancementScale, false);
+    applyMap(modifiers, item.drawback, fit.drawbackScale, true);
+    if (fit.tier === 'weak') {
+      modifiers.damageRate = (modifiers.damageRate ?? 0) - 0.15;
+      modifiers.moveSpeedRate = (modifiers.moveSpeedRate ?? 0) - 0.08;
+      modifiers.normalCooldown = (modifiers.normalCooldown ?? 0) + 0.18;
+    }
+    modifiers.equipmentFit.push({ id, tier: fit.tier, effectScale: fit.effectScale, drawbackScale: fit.drawbackScale });
     modifiers.effects.push(...Object.keys(item.effect));
     modifiers.drawbacks.push(...Object.keys(item.drawback));
   }
 
-  modifiers.maxHp *= 1 + (modifiers.maxHpRate ?? 0);
-  modifiers.moveSpeed *= 1 + (modifiers.moveSpeedRate ?? 0);
-  modifiers.damage *= 1 + (modifiers.damageRate ?? 0);
+  modifiers.maxHp *= Math.max(0.35, 1 + (modifiers.maxHpRate ?? 0));
+  modifiers.moveSpeed *= Math.max(0.35, 1 + (modifiers.moveSpeedRate ?? 0));
+  modifiers.damage *= Math.max(0.25, 1 + (modifiers.damageRate ?? 0));
+  modifiers.affinitySummary = modifiers.equipmentFit.reduce((summary, fit) => {
+    summary[fit.tier] += 1;
+    return summary;
+  }, { strong: 0, neutral: 0, weak: 0 });
   return modifiers;
 }
 
 function applyMap(target, values, scale, drawback) {
   for (const [key, raw] of Object.entries(values)) {
     if (typeof raw !== 'number') continue;
+    if (binaryKeys.has(key)) {
+      if (scale >= 0.5 && raw > 0) target[key] = Math.max(target[key] ?? 0, raw);
+      continue;
+    }
     const value = raw * scale;
     if (key === 'maxHp') target.maxHpRate = (target.maxHpRate ?? 0) + value;
     else if (key === 'damage') target.damageRate = (target.damageRate ?? 0) + value;

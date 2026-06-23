@@ -1,7 +1,7 @@
-import { starterLoadout } from '../data/equipment.js';
+import { starterEquipmentIds, starterLoadout } from '../data/equipment.js';
 
 export const SAVE_KEY = 'mikutps.save';
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export function createDefaultSave() {
   return {
@@ -12,7 +12,7 @@ export function createDefaultSave() {
     parts: 0,
     selectedCharacter: 'miku',
     unlockedCharacters: ['miku'],
-    ownedEquipment: Object.fromEntries(Object.values(starterLoadout).map((id) => [id, { level: 0, locked: true }])),
+    ownedEquipment: Object.fromEntries(starterEquipmentIds.map((id) => [id, { level: 0, locked: true }])),
     loadout: { ...starterLoadout },
     stages: {},
     settings: { quality: 'auto', aimAssist: 0.55, autoFire: true, screenShake: 0.7, audio: 0.8, haptics: true },
@@ -28,6 +28,7 @@ export function migrateSave(value) {
     ...createDefaultSave(),
     ...value,
     version: SAVE_VERSION,
+    ownedEquipment: { ...createDefaultSave().ownedEquipment, ...value.ownedEquipment },
     loadout: { ...starterLoadout, ...value.loadout },
     settings: { ...createDefaultSave().settings, ...value.settings },
     telemetry: {
