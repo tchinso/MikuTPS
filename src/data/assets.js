@@ -1,4 +1,4 @@
-const assetPath = (kind, fileName) => `${import.meta.env.BASE_URL}assets/models/characters/${kind}/${fileName}`;
+const runtimeAssetPath = (fileName) => `${import.meta.env.BASE_URL}assets/models/characters/runtime/${fileName}`;
 
 export const assetManifest = [
   ['miku', 'miku.glb', '5C0DF2C7FD2F500C1A50AA0C293F9EABDD80659DBC8B0B806575A3CCB21E4F5A'],
@@ -17,8 +17,8 @@ export const assetManifest = [
 ].map(([characterId, fileName, sha256]) => ({
   characterId,
   fileName,
-  rawPath: assetPath('raw', fileName),
-  runtimePath: assetPath('runtime', fileName),
+  sourcePath: `assets-source/characters/${fileName}`,
+  runtimePath: runtimeAssetPath(fileName),
   sha256,
   licenseStatus: 'unverified',
   rigProfile: 'static-mesh-unrigged',

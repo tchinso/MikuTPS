@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 
-const directory = resolve(process.argv[2] ?? 'public/assets/models/characters/raw');
+const directory = resolve(process.argv[2] ?? 'assets-source/characters');
 const files = readdirSync(directory).filter((file) => file.endsWith('.glb')).sort();
 
 function readJsonChunk(path) {

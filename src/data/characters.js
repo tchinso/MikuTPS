@@ -4,6 +4,7 @@ const runtimeAsset = (fileName) => `${import.meta.env.BASE_URL}assets/models/cha
 export const characters = [
   {
     id: 'miku', name: '하츠네 미쿠', codename: 'Resonance', role: 'versatile', weaponType: 'pulseRifle',
+    combatProfile: { fireModel: 'hitscan', tacticalHook: 'resonanceChain' },
     asset: runtimeAsset('miku.glb'), unlock: { type: 'starter' },
     stats: { hp: 100, speed: 6.2, damage: 12, fireRate: 7.5, range: 21, break: 7 },
     axes: { damage: 3, break: 3, control: 2, mobility: 4, survival: 2, support: 3, range: 3, mechanic: 4 },
@@ -13,6 +14,7 @@ export const characters = [
   },
   {
     id: 'nari', name: '나리', codename: 'Wayfinder', role: 'support', weaponType: 'beaconPistol',
+    combatProfile: { fireModel: 'hitscan', tacticalHook: 'objectiveAssist' },
     asset: runtimeAsset('navi-kemonomimi.glb'), unlock: { type: 'stage', stage: '1-4' },
     stats: { hp: 92, speed: 6.4, damage: 9, fireRate: 5.5, range: 19, break: 6 },
     axes: { damage: 2, break: 2, control: 3, mobility: 4, survival: 2, support: 5, range: 3, mechanic: 5 },
@@ -22,6 +24,7 @@ export const characters = [
   },
   {
     id: 'bibi', name: '비비', codename: 'Pocket Nova', role: 'demolition', weaponType: 'microGrenade',
+    combatProfile: { fireModel: 'projectile', tacticalHook: 'gravityExplosion' },
     asset: runtimeAsset('tiny-adventurer.glb'), unlock: { type: 'stageScore', stage: '1-8', score: 6500 },
     stats: { hp: 82, speed: 6.8, damage: 18, fireRate: 2.2, range: 14, break: 10 },
     axes: { damage: 4, break: 5, control: 4, mobility: 4, survival: 1, support: 1, range: 2, mechanic: 4 },
@@ -31,6 +34,7 @@ export const characters = [
   },
   {
     id: 'serin', name: '세린', codename: 'Triage', role: 'medic', weaponType: 'burstSMG',
+    combatProfile: { fireModel: 'hitscanBurst', tacticalHook: 'cleanseHeal' },
     asset: runtimeAsset('nurse-twintail.glb'), unlock: { type: 'stage', stage: '1-10' },
     stats: { hp: 108, speed: 5.9, damage: 8, fireRate: 9, range: 15, break: 4 },
     axes: { damage: 2, break: 1, control: 2, mobility: 3, survival: 5, support: 5, range: 2, mechanic: 4 },
@@ -40,6 +44,7 @@ export const characters = [
   },
   {
     id: 'noir', name: '느와르', codename: 'Black Wing', role: 'aerial', weaponType: 'railLance',
+    combatProfile: { fireModel: 'chargedHitscan', tacticalHook: 'aerialCharge' },
     asset: runtimeAsset('fallen-angel.glb'), unlock: { type: 'challenge', stage: '2-8', challenge: 'noGroundHit' },
     stats: { hp: 88, speed: 7.1, damage: 21, fireRate: 1.5, range: 28, break: 5 },
     axes: { damage: 5, break: 2, control: 2, mobility: 5, survival: 1, support: 1, range: 5, mechanic: 4 },
@@ -49,6 +54,7 @@ export const characters = [
   },
   {
     id: 'mora', name: '모라', codename: 'Marionette', role: 'controller', weaponType: 'threadCaster',
+    combatProfile: { fireModel: 'tetherBeam', tacticalHook: 'networkLock' },
     asset: runtimeAsset('gothic-doll.glb'), unlock: { type: 'stage', stage: '3-2' },
     stats: { hp: 94, speed: 5.6, damage: 10, fireRate: 4, range: 18, break: 6 },
     axes: { damage: 2, break: 3, control: 5, mobility: 2, survival: 3, support: 4, range: 3, mechanic: 5 },
@@ -58,6 +64,7 @@ export const characters = [
   },
   {
     id: 'roa', name: '로아', codename: 'Surveyor', role: 'sniper', weaponType: 'surveyRifle',
+    combatProfile: { fireModel: 'precisionHitscan', tacticalHook: 'weakpointSequence' },
     asset: runtimeAsset('beret-scout.glb'), unlock: { type: 'stageScore', stage: '3-6', score: 7200 },
     stats: { hp: 90, speed: 5.8, damage: 25, fireRate: 1.2, range: 32, break: 8 },
     axes: { damage: 5, break: 3, control: 2, mobility: 2, survival: 2, support: 3, range: 5, mechanic: 4 },
@@ -67,6 +74,7 @@ export const characters = [
   },
   {
     id: 'marin', name: '마린', codename: 'Riptide', role: 'skirmisher', weaponType: 'waterShotgun',
+    combatProfile: { fireModel: 'shotgun', tacticalHook: 'projectileClear' },
     asset: runtimeAsset('swimsuit-runner.glb'), unlock: { type: 'stage', stage: '3-10' },
     stats: { hp: 102, speed: 6.9, damage: 8, fireRate: 2.7, range: 10, break: 12 },
     axes: { damage: 3, break: 5, control: 3, mobility: 5, survival: 3, support: 1, range: 1, mechanic: 4 },
@@ -76,6 +84,7 @@ export const characters = [
   },
   {
     id: 'jigsaw', name: '지소', codename: 'Patchwork', role: 'engineer', weaponType: 'modularCarbine',
+    combatProfile: { fireModel: 'droneCarbine', tacticalHook: 'deviceRewire' },
     asset: runtimeAsset('puzzle-tech.glb'), unlock: { type: 'challenge', stage: '4-4', challenge: 'allNodes' },
     stats: { hp: 98, speed: 5.8, damage: 11, fireRate: 6.5, range: 20, break: 6 },
     axes: { damage: 3, break: 3, control: 4, mobility: 2, survival: 3, support: 4, range: 3, mechanic: 5 },
@@ -85,6 +94,7 @@ export const characters = [
   },
   {
     id: 'yura', name: '유라', codename: 'Foxfire', role: 'assassin', weaponType: 'seekerKunai',
+    combatProfile: { fireModel: 'seeker', tacticalHook: 'rearAmbush' },
     asset: runtimeAsset('fox-spark.glb'), unlock: { type: 'stage', stage: '4-8' },
     stats: { hp: 84, speed: 7.5, damage: 16, fireRate: 4.2, range: 16, break: 4 },
     axes: { damage: 5, break: 1, control: 3, mobility: 5, survival: 2, support: 1, range: 2, mechanic: 5 },
@@ -94,6 +104,7 @@ export const characters = [
   },
   {
     id: 'lumi', name: '루미', codename: 'Dreamfield', role: 'zoneKeeper', weaponType: 'sleepMortar',
+    combatProfile: { fireModel: 'fieldProjectile', tacticalHook: 'slowField' },
     asset: runtimeAsset('pajama-dreamer.glb'), unlock: { type: 'stageScore', stage: '5-2', score: 7800 },
     stats: { hp: 112, speed: 5.2, damage: 13, fireRate: 1.8, range: 22, break: 7 },
     axes: { damage: 3, break: 3, control: 5, mobility: 1, survival: 4, support: 3, range: 4, mechanic: 4 },
@@ -103,6 +114,7 @@ export const characters = [
   },
   {
     id: 'sora', name: '소라', codename: 'Undertow', role: 'tank', weaponType: 'anchorCannon',
+    combatProfile: { fireModel: 'heavyCannon', tacticalHook: 'anchorGuard' },
     asset: runtimeAsset('school-swimmer.glb'), unlock: { type: 'challenge', stage: '5-6', challenge: 'escortPerfect' },
     stats: { hp: 145, speed: 4.8, damage: 14, fireRate: 2.4, range: 17, break: 11 },
     axes: { damage: 3, break: 5, control: 4, mobility: 1, survival: 5, support: 3, range: 2, mechanic: 4 },
@@ -112,6 +124,7 @@ export const characters = [
   },
   {
     id: 'neko', name: '네코', codename: 'Afterimage', role: 'runner', weaponType: 'twinSMG',
+    combatProfile: { fireModel: 'rapidHitscan', tacticalHook: 'movingCombo' },
     asset: runtimeAsset('cat-street.glb'), unlock: { type: 'stage', stage: '5-9' },
     stats: { hp: 88, speed: 8.0, damage: 7, fireRate: 12, range: 13, break: 3 },
     axes: { damage: 3, break: 1, control: 2, mobility: 5, survival: 2, support: 2, range: 1, mechanic: 5 },

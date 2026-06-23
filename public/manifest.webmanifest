@@ -1,0 +1,19 @@
+{
+  "name": "MikuTPS — Resonance Protocol",
+  "short_name": "MikuTPS",
+  "description": "서로 다른 캐릭터와 장비로 50개의 전술 규칙을 공략하는 모바일 TPS",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#07131a",
+  "theme_color": "#07131a",
+  "icons": [
+    {
+      "src": "./icons/mikutps-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

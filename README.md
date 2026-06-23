@@ -11,6 +11,8 @@ pnpm dev
 
 키보드에서는 `WASD` 이동, `J` 사격, `Space` 회피, `E` 스킬을 사용합니다. 모바일에서는 좌측 이동 패드와 우측 조준/사격 패드를 동시에 조작합니다.
 
+모바일의 출격 탭은 Fullscreen API 진입을 함께 시도하며, 전투 HUD의 `⛶` 버튼(키보드 `F`)으로 언제든 전체화면을 전환할 수 있습니다. 브라우저가 Fullscreen API를 막는 경우 홈 화면에 추가해 실행하면 웹앱 매니페스트의 가로 `fullscreen` 모드로 열립니다.
+
 ## 검사
 
 ```powershell
@@ -34,7 +36,7 @@ pnpm verify:pages
 
 ## 자산
 
-- `public/assets/models/characters/raw`: SHA-256을 보존한 영문 파일명 원본
+- `assets-source/characters`: 공개 빌드에서 격리된 SHA-256 보존 영문 원본
 - `public/assets/models/characters/runtime`: 게임에서 읽는 런타임 사본
 - `src/data/assets.js`: 캐릭터 ID, 경로, 해시, 리그·라이선스 조사 상태
 

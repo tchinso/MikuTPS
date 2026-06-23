@@ -90,12 +90,16 @@ describe('asset preservation', () => {
       expect(asset.fileName).toMatch(/^[a-z0-9-]+\.glb$/);
       expect(asset.rigProfile).toBe('static-mesh-unrigged');
       expect(asset.requiresRigging).toBe(true);
-      const path = resolve('public/assets/models/characters/raw', asset.fileName);
+      const path = resolve('assets-source/characters', asset.fileName);
       const hash = createHash('sha256').update(readFileSync(path)).digest('hex').toUpperCase();
       expect(hash, asset.fileName).toBe(asset.sha256);
       expect(readFileSync(resolve('public/assets/models/characters/runtime', asset.fileName)).byteLength).toBeGreaterThan(0);
     }
-    for (const duplicate of duplicateAssets) expect(duplicate.fileName).toMatch(/^[a-z0-9-]+\.glb$/);
+    for (const duplicate of duplicateAssets) {
+      expect(duplicate.fileName).toMatch(/^[a-z0-9-]+\.glb$/);
+      const duplicateHash = createHash('sha256').update(readFileSync(resolve('assets-source/characters', duplicate.fileName))).digest('hex').toUpperCase();
+      expect(duplicateHash).toBe(duplicate.sha256);
+    }
   });
 });
 

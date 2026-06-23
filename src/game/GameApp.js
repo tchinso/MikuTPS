@@ -3,6 +3,7 @@ import { chapters, stages, stageById } from '../data/stages.js';
 import { equipment, equipmentById, EQUIPMENT_SLOTS } from '../data/equipment.js';
 import { auditOrthogonality } from '../systems/orthogonality.js';
 import { auditSimulatedBalance } from '../systems/balanceSimulator.js';
+import { canFullscreen, enterFullscreen, getFullscreenElement, leaveFullscreen } from '../systems/fullscreen.js';
 import { applyStageResult, createDefaultSave, exportSave, importSave, loadSave, persistSave, SAVE_KEY } from '../systems/storage.js';
 
 const slotNames = { weapon: '무기', armor: '보호구', shoes: '신발', accessory: '장신구' };
@@ -14,15 +15,20 @@ export class GameApp {
     this.save = this.refreshUnlocks(loadSave());
     this.screen = 'home';
     this.selectedChapter = 1;
+    this.equipmentFilter = 'all';
+    this.equipmentSort = 'name';
     this.audit = auditOrthogonality();
     this.balanceAudit = auditSimulatedBalance();
     this.onClick = (event) => this.handleClick(event);
     this.onChange = (event) => this.handleChange(event);
+    this.onFullscreenChange = () => this.syncFullscreenButton();
   }
 
   mount() {
     this.root.addEventListener('click', this.onClick);
     this.root.addEventListener('change', this.onChange);
+    document.addEventListener('fullscreenchange', this.onFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', this.onFullscreenChange);
     this.renderShell();
     this.showScreen('home');
   }
@@ -76,26 +82,27 @@ export class GameApp {
   }
 
   homeTemplate() {
-    const nextStage = stages.find((stage) => this.isStageUnlocked(stage) && !this.save.stages[stage.id]?.cleared) ?? stages.at(-1);
     const selected = characterById[this.save.selectedCharacter] ?? characters[0];
     const cleared = Object.values(this.save.stages).filter((result) => result.cleared).length;
+    const campaignComplete = cleared >= stages.length;
+    const nextStage = stages.find((stage) => this.isStageUnlocked(stage) && !this.save.stages[stage.id]?.cleared) ?? stages.at(-1);
     return `
       <section class="home-grid">
         <article class="hero-panel" style="--hero:${nextStage.color}">
           <div class="hero-copy">
-            <p class="eyebrow">NEXT OPERATION · ${nextStage.id}</p>
-            <h1>${nextStage.title}</h1>
-            <p>${nextStage.objective}</p>
+            <p class="eyebrow">${campaignComplete ? 'RESONANCE RESTORED · ENDING' : `NEXT OPERATION · ${nextStage.id}`}</p>
+            <h1>${campaignComplete ? '우리의 서로 다른 박자' : nextStage.title}</h1>
+            <p>${campaignComplete ? '하나의 최강이 아니라 서로 다른 해법으로 종결 프로토콜을 완주했습니다. 모든 작전을 다른 조합으로 다시 탐색할 수 있습니다.' : nextStage.objective}</p>
             <div class="mechanic-tags"><span>${nextStage.primaryMechanic}</span><span>${nextStage.secondaryMechanic}</span></div>
-            <button class="primary-action" data-stage-start="${nextStage.id}"><span>출격</span><small>${selected.name} · 예상 ${Math.ceil(nextStage.targetSeconds / 60)}분</small></button>
+            <button class="primary-action" data-stage-start="${nextStage.id}"><span>${campaignComplete ? '피날레 재도전' : '출격'}</span><small>${selected.name} · ${campaignComplete ? '엔딩 기록' : `예상 ${Math.ceil(nextStage.targetSeconds / 60)}분`}</small></button>
           </div>
-          <div class="hero-orbit" aria-hidden="true"><i></i><i></i><i></i><b>${nextStage.id}</b></div>
+          <div class="hero-orbit" aria-hidden="true"><i></i><i></i><i></i><b>${campaignComplete ? 'END' : nextStage.id}</b></div>
         </article>
         <article class="status-card">
           <div class="section-heading"><div><span>CAMPAIGN</span><h2>공명 진행도</h2></div><b>${cleared}<small>/50</small></b></div>
           <div class="progress-track"><i style="width:${cleared * 2}%"></i></div>
           <div class="chapter-pips">${chapters.map((chapter) => `<span class="${cleared >= chapter.id * 10 ? 'complete' : cleared >= (chapter.id - 1) * 10 ? 'current' : ''}" style="--pip:${chapter.color}">${chapter.id}</span>`).join('')}</div>
-          <p>모든 스테이지는 서로 다른 규칙을 시험합니다. 추천은 정답이 아니라, 문제를 읽는 첫 단서입니다.</p>
+          <p>${campaignComplete ? '캠페인 완료. 기록된 텔레메트리로 미사용 캐릭터와 지배 조합을 계속 감시합니다.' : '모든 스테이지는 서로 다른 규칙을 시험합니다. 추천은 정답이 아니라, 문제를 읽는 첫 단서입니다.'}</p>
           <button class="ghost-action" data-nav="stages">전체 작전 보기 →</button>
         </article>
         <article class="character-card">
@@ -183,8 +190,22 @@ export class GameApp {
     return `
       <section class="content-page workshop-page">
         <div class="page-heading"><div><p class="eyebrow">SIDEGRADES, NOT POWER CREEP</p><h1>공명 공방</h1><p>장비는 문제를 바꾸는 대신 새로운 대가를 만듭니다. 최대 강화는 5단계입니다.</p></div><div class="loadout-mini">${EQUIPMENT_SLOTS.map((slot) => `<span><small>${slotNames[slot]}</small><b>${equipmentById[this.save.loadout[slot]].name}</b></span>`).join('')}</div></div>
-        ${EQUIPMENT_SLOTS.map((slot) => `<section class="equipment-section"><div class="section-heading"><div><span>${slot.toUpperCase()}</span><h2>${slotNames[slot]}</h2></div><small>${equipment.filter((item) => item.slot === slot).length}개 설계</small></div><div class="equipment-grid">${equipment.filter((item) => item.slot === slot).map((item) => this.equipmentCard(item)).join('')}</div></section>`).join('')}
+        <div class="inventory-tools"><div><button data-equipment-filter="all" class="${this.equipmentFilter === 'all' ? 'active' : ''}">전체</button><button data-equipment-filter="owned" class="${this.equipmentFilter === 'owned' ? 'active' : ''}">보유</button><button data-equipment-filter="blueprint" class="${this.equipmentFilter === 'blueprint' ? 'active' : ''}">미보유 설계</button></div><label>정렬 <select data-equipment-sort><option value="name" ${this.equipmentSort === 'name' ? 'selected' : ''}>이름</option><option value="level" ${this.equipmentSort === 'level' ? 'selected' : ''}>강화 단계</option><option value="cost" ${this.equipmentSort === 'cost' ? 'selected' : ''}>기본 비용</option></select></label></div>
+        ${EQUIPMENT_SLOTS.map((slot) => { const items = this.filteredEquipment(slot); return `<section class="equipment-section"><div class="section-heading"><div><span>${slot.toUpperCase()}</span><h2>${slotNames[slot]}</h2></div><small>${items.length}개 표시</small></div><div class="equipment-grid">${items.length ? items.map((item) => this.equipmentCard(item)).join('') : '<p class="empty-equipment">이 조건에 맞는 장비가 없습니다.</p>'}</div></section>`; }).join('')}
       </section>`;
+  }
+
+  filteredEquipment(slot) {
+    const items = equipment.filter((item) => {
+      if (item.slot !== slot) return false;
+      const owned = Boolean(this.save.ownedEquipment[item.id]);
+      return this.equipmentFilter === 'all' || (this.equipmentFilter === 'owned' ? owned : !owned);
+    });
+    return items.sort((a, b) => {
+      if (this.equipmentSort === 'level') return (this.save.ownedEquipment[b.id]?.level ?? -1) - (this.save.ownedEquipment[a.id]?.level ?? -1) || a.name.localeCompare(b.name, 'ko');
+      if (this.equipmentSort === 'cost') return a.enhancement.baseCost - b.enhancement.baseCost || a.name.localeCompare(b.name, 'ko');
+      return a.name.localeCompare(b.name, 'ko');
+    });
   }
 
   equipmentCard(item) {
@@ -196,7 +217,7 @@ export class GameApp {
       <div class="equipment-icon">${item.slot === 'weapon' ? '⌁' : item.slot === 'armor' ? '⬡' : item.slot === 'shoes' ? '≫' : '◈'}</div>
       <div><small>${equipped ? 'EQUIPPED' : owned ? `LEVEL ${level}` : 'BLUEPRINT'}</small><h3>${item.name}</h3><p>${item.description}</p></div>
       <dl><dt>효과</dt><dd>${Object.entries(item.effect).map(([key, value]) => `${key} ${typeof value === 'number' && value < 1 ? `+${Math.round(value * 100)}%` : value}`).join(' · ')}</dd><dt>대가</dt><dd>${Object.entries(item.drawback).map(([key, value]) => `${key} ${Math.round(value * 100)}%`).join(' · ')}</dd></dl>
-      <div class="equipment-actions">${owned ? `<button data-equip="${item.id}" ${equipped ? 'disabled' : ''}>${equipped ? '장착 중' : '장착'}</button><button data-upgrade="${item.id}" ${level >= item.enhancement.max ? 'disabled' : ''}>${level >= item.enhancement.max ? 'MAX' : `강화 ${cost} C`}</button>` : `<button data-buy="${item.id}">설계 구매 ${cost} C</button>`}</div>
+      <div class="equipment-actions">${owned ? `<button data-equip="${item.id}" ${equipped ? 'disabled' : ''}>${equipped ? '장착 중' : '장착'}</button><button data-upgrade="${item.id}" ${level >= item.enhancement.max ? 'disabled' : ''}>${level >= item.enhancement.max ? 'MAX' : `강화 ${cost} C`}</button><button data-lock-equipment="${item.id}" aria-label="${item.name} ${owned.locked ? '잠금 해제' : '잠금'}">${owned.locked ? '◆' : '◇'}</button>` : `<button data-buy="${item.id}">설계 구매 ${cost} C</button>`}</div>
     </article>`;
   }
 
@@ -225,7 +246,7 @@ export class GameApp {
     target.innerHTML = `
       <section class="combat-root" id="combat-root">
         <div class="combat-hud">
-          <div class="hud-left"><button data-combat-action="pause" aria-label="작전 나가기">Ⅱ</button><div><span>${stage.id} · ${stage.title}</span><b>${stage.objective}</b></div></div>
+          <div class="hud-left"><button data-combat-action="pause" aria-label="작전 나가기">Ⅱ</button><button class="fullscreen-button" data-combat-action="fullscreen" aria-label="${getFullscreenElement() ? '전체화면 종료' : '전체화면으로 플레이'}" title="전체화면 전환">${getFullscreenElement() ? '×' : '⛶'}</button><div><span>${stage.id} · ${stage.title}</span><b>${stage.objective}</b></div></div>
           <div class="hud-center"><span>SCORE</span><b data-hud-score>000000</b><em data-hud-combo></em></div>
           <div class="hud-right"><span title="남은 적"><i class="enemy-dot"></i><b data-hud-enemies>0</b></span><span class="wave-readout">W <b data-hud-wave>1/${stage.waves}</b></span><b data-hud-time>00:00</b></div>
         </div>
@@ -248,7 +269,8 @@ export class GameApp {
       ownedEquipment: this.save.ownedEquipment,
       onHud: (hud) => this.updateHud(hud),
       onComplete: (result) => this.showResult(stage, result),
-      onExit: () => this.showScreen('stages')
+      onExit: () => this.showScreen('stages'),
+      onFullscreen: () => this.toggleFullscreen()
     });
     this.combat.mount();
   }
@@ -273,9 +295,10 @@ export class GameApp {
     result.loadout = { ...this.save.loadout };
     this.save = applyStageResult(this.save, stage, result);
     if (result.success) this.save = this.refreshUnlocks(this.save);
+    const finale = result.success && stage.id === '5-10';
     const overlay = document.createElement('div');
     overlay.className = 'result-overlay';
-    overlay.innerHTML = `<div class="result-card ${result.success ? '' : 'failed'}"><p class="eyebrow">${result.success ? 'OPERATION COMPLETE' : 'SIGNAL LOST'}</p><div class="result-rank rank-${result.rank}">${rankNames[result.rank]}</div><h2>${stage.id} ${stage.title}</h2><b class="result-score">${result.score.toLocaleString()}</b><div class="result-stats"><span><small>TIME</small>${this.formatTime(result.elapsed)}</span><span><small>ACCURACY</small>${Math.round(result.stats.accuracy * 100)}%</span><span><small>BREAK</small>${result.stats.breaks}</span><span><small>DAMAGE</small>${Math.round(result.stats.damageTaken)}</span></div><div class="result-actions"><button data-result-action="stages">작전 지도</button><button class="primary-action" data-result-action="retry">다시 출격</button></div></div>`;
+    overlay.innerHTML = `<div class="result-card ${result.success ? '' : 'failed'}"><p class="eyebrow">${finale ? 'RESONANCE PROTOCOL COMPLETE' : result.success ? 'OPERATION COMPLETE' : 'SIGNAL LOST'}</p><div class="result-rank rank-${result.rank}">${rankNames[result.rank]}</div><h2>${finale ? '우리의 서로 다른 박자 · END' : `${stage.id} ${stage.title}`}</h2><b class="result-score">${result.score.toLocaleString()}</b><div class="result-stats"><span><small>TIME</small>${this.formatTime(result.elapsed)}</span><span><small>ACCURACY</small>${Math.round(result.stats.accuracy * 100)}%</span><span><small>BREAK</small>${result.stats.breaks}</span><span><small>DAMAGE</small>${Math.round(result.stats.damageTaken)}</span></div><div class="result-actions"><button data-result-action="${finale ? 'home' : 'stages'}">${finale ? '엔딩 허브' : '작전 지도'}</button><button class="primary-action" data-result-action="retry">다시 출격</button></div></div>`;
     overlay.dataset.stageId = stage.id;
     this.root.querySelector('#combat-root').append(overlay);
     this.updateResources();
@@ -290,7 +313,10 @@ export class GameApp {
       return this.showScreen('stages');
     }
     const stageId = event.target.closest('[data-stage-start]')?.dataset.stageStart;
-    if (stageId) return this.showScreen('combat', { stageId });
+    if (stageId) {
+      this.requestCombatFullscreen();
+      return this.showScreen('combat', { stageId });
+    }
     const characterId = event.target.closest('[data-character-select]')?.dataset.characterSelect;
     if (characterId) {
       this.save = persistSave({ ...this.save, selectedCharacter: characterId });
@@ -303,10 +329,26 @@ export class GameApp {
     if (equipId) return this.equipItem(equipId);
     const upgradeId = event.target.closest('[data-upgrade]')?.dataset.upgrade;
     if (upgradeId) return this.upgradeItem(upgradeId);
+    const lockId = event.target.closest('[data-lock-equipment]')?.dataset.lockEquipment;
+    if (lockId) {
+      const owned = this.save.ownedEquipment[lockId];
+      this.save = persistSave({ ...this.save, ownedEquipment: { ...this.save.ownedEquipment, [lockId]: { ...owned, locked: !owned.locked } } });
+      this.toast(`${equipmentById[lockId].name} ${owned.locked ? '잠금 해제' : '잠금'}`);
+      return this.showScreen('workshop');
+    }
+    const filter = event.target.closest('[data-equipment-filter]')?.dataset.equipmentFilter;
+    if (filter) {
+      this.equipmentFilter = filter;
+      return this.showScreen('workshop');
+    }
     const resultAction = event.target.closest('[data-result-action]')?.dataset.resultAction;
     if (resultAction) {
       const currentStage = event.target.closest('.result-overlay')?.dataset.stageId;
-      return resultAction === 'retry' ? this.showScreen('combat', { stageId: currentStage }) : this.showScreen('stages');
+      if (resultAction === 'retry') {
+        this.requestCombatFullscreen();
+        return this.showScreen('combat', { stageId: currentStage });
+      }
+      return this.showScreen(resultAction === 'home' ? 'home' : 'stages');
     }
     if (event.target.closest('[data-save-export]')) {
       const area = this.root.querySelector('#save-transfer');
@@ -331,6 +373,10 @@ export class GameApp {
   }
 
   handleChange(event) {
+    if ('equipmentSort' in event.target.dataset) {
+      this.equipmentSort = event.target.value;
+      return this.showScreen('workshop');
+    }
     const setting = event.target.dataset.setting;
     if (!setting) return;
     const value = event.target.type === 'checkbox' ? event.target.checked : event.target.type === 'range' ? Number(event.target.value) : event.target.value;
@@ -404,10 +450,40 @@ export class GameApp {
     this.toastTimer = setTimeout(() => toast.classList.remove('visible'), 2200);
   }
 
+  isTouchDevice() {
+    return navigator.maxTouchPoints > 0 || window.matchMedia?.('(pointer: coarse)').matches;
+  }
+
+  async requestCombatFullscreen() {
+    if (!this.isTouchDevice() || getFullscreenElement() || !canFullscreen()) return false;
+    const entered = await enterFullscreen(document.documentElement);
+    if (entered) screen.orientation?.lock?.('landscape').catch(() => {});
+    this.syncFullscreenButton();
+    return entered;
+  }
+
+  async toggleFullscreen() {
+    const active = Boolean(getFullscreenElement());
+    const changed = active ? await leaveFullscreen() : await enterFullscreen(document.documentElement);
+    if (!active && changed) screen.orientation?.lock?.('landscape').catch(() => {});
+    if (!changed) this.toast('이 브라우저에서는 자동 전체화면을 지원하지 않습니다. 홈 화면에 추가해 실행해 주세요.');
+    this.syncFullscreenButton();
+  }
+
+  syncFullscreenButton() {
+    const button = this.root.querySelector('[data-combat-action="fullscreen"]');
+    if (!button) return;
+    const active = Boolean(getFullscreenElement());
+    button.textContent = active ? '×' : '⛶';
+    button.setAttribute('aria-label', active ? '전체화면 종료' : '전체화면으로 플레이');
+  }
+
   destroy() {
     this.combat?.destroy();
     this.root.removeEventListener('click', this.onClick);
     this.root.removeEventListener('change', this.onChange);
+    document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+    document.removeEventListener('webkitfullscreenchange', this.onFullscreenChange);
     this.root.innerHTML = '';
   }
 }

@@ -34,13 +34,14 @@ export class InputController {
   }
 
   handleKey(event, pressed) {
-    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) {
+    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyF'].includes(event.code)) {
       event.preventDefault();
     }
     pressed ? this.keys.add(event.code) : this.keys.delete(event.code);
     if (pressed) this.callbacks.activity?.();
     if (pressed && event.code === 'Space') this.callbacks.dodge?.();
     if (pressed && (event.code === 'KeyE' || event.code === 'ShiftLeft')) this.callbacks.skill?.();
+    if (pressed && event.code === 'KeyF') this.callbacks.fullscreen?.();
     this.firing = this.keys.has('KeyJ') || this.keys.has('Enter');
     this.updateKeyboardMove();
   }

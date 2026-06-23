@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { resolveEnemyArchetype } from '../data/enemies.js';
 import { resolveCombatModifiers, resolveIncomingDamage, resolveShotModifiers } from './CombatModifiers.js';
 import { CombatAudio } from './CombatAudio.js';
+import { createQualityState, resolveQualityConfig, sampleAdaptiveQuality } from './AdaptiveQuality.js';
 import { InputController } from './InputController.js';
 import { StageMechanicDirector } from './StageMechanicDirector.js';
 
@@ -10,7 +11,7 @@ const FIXED_DT = 1 / 60;
 const ARENA_LIMIT = 15;
 
 export class CombatWorld {
-  constructor({ root, stage, character, settings, loadout, ownedEquipment, onHud, onComplete, onExit }) {
+  constructor({ root, stage, character, settings, loadout, ownedEquipment, onHud, onComplete, onExit, onFullscreen }) {
     this.root = root;
     this.stage = stage;
     this.character = character;
@@ -19,8 +20,11 @@ export class CombatWorld {
     this.onHud = onHud;
     this.onComplete = onComplete;
     this.onExit = onExit;
+    this.onFullscreen = onFullscreen;
     this.clock = new THREE.Clock();
     this.accumulator = 0;
+    this.renderAccumulator = 0;
+    this.qualityState = createQualityState(settings.quality);
     this.elapsed = 0;
     this.score = 0;
     this.combo = 0;
@@ -32,7 +36,12 @@ export class CombatWorld {
     this.audio = new CombatAudio(settings.audio);
     this.renderFreezeFrames = 0;
     this.cameraShake = 0;
+    this.activeArenaLimit = ARENA_LIMIT;
+    this.enemyTimeScale = 1;
+    this.mechanicMoveMultiplier = 1;
     this.projectiles = [];
+    this.playerProjectiles = [];
+    this.playerFields = [];
     this.enemies = [];
     this.effects = [];
     this.telegraphs = [];
@@ -50,11 +59,9 @@ export class CombatWorld {
     this.camera.position.set(0, 15, 13);
     this.camera.lookAt(0, 0, 0);
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
-    const dpr = this.settings.quality === 'low' ? 1 : Math.min(window.devicePixelRatio, 1.5);
-    this.renderer.setPixelRatio(dpr);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.shadowMap.enabled = this.settings.quality !== 'low';
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.applyRendererQuality(false);
     this.renderer.domElement.className = 'combat-canvas';
     this.root.prepend(this.renderer.domElement);
 
@@ -66,6 +73,7 @@ export class CombatWorld {
       dodge: () => this.dodge(),
       skill: () => this.castSkill(),
       pause: () => this.onExit?.(),
+      fullscreen: () => this.onFullscreen?.(),
       activity: () => this.audio.unlock()
     });
     this.input.mount();
@@ -215,7 +223,7 @@ export class CombatWorld {
       group, body, core, archetype, hp, maxHp: hp, break: breakValue, maxBreak: breakValue,
       brokenUntil: 0, speed: (boss ? 1.7 : 2.05) * archetype.speed,
       nextShot: this.elapsed + (this.stage.chapter === 1 ? 3.4 : 2.2) + (seed % 5) * 0.42 + Math.random() * 0.35,
-      nextSpecial: boss ? this.elapsed + 4.5 : Infinity, dead: false, boss, targetable: true, orbit: Math.random() > 0.5 ? 1 : -1
+      nextSpecial: boss ? this.elapsed + 4.5 : Infinity, phase: seed % 2, dead: false, boss, targetable: true, orbit: Math.random() > 0.5 ? 1 : -1
     });
   }
 
@@ -241,8 +249,19 @@ export class CombatWorld {
       this.accumulator -= FIXED_DT;
     }
     this.mixer?.update(dt);
+    const renderInterval = this.qualityConfig.renderFps === 30 ? 1 / 30 : 0;
+    this.renderAccumulator += dt;
+    const renderDue = renderInterval === 0 || this.renderAccumulator + 1 / 240 >= renderInterval;
+    let rendered = false;
     if (this.renderFreezeFrames > 0) this.renderFreezeFrames -= 1;
-    else this.render(dt);
+    else if (renderDue) {
+      this.render(dt);
+      rendered = true;
+      this.renderAccumulator = renderInterval ? this.renderAccumulator % renderInterval : 0;
+    }
+    const qualitySample = sampleAdaptiveQuality(this.qualityState, dt, rendered);
+    this.qualityState = qualitySample.state;
+    if (qualitySample.changed) this.applyRendererQuality();
   };
 
   simulate(dt) {
@@ -253,6 +272,8 @@ export class CombatWorld {
     this.mechanics.update(dt);
     this.updateEnemies(dt);
     this.updateProjectiles(dt);
+    this.updatePlayerProjectiles(dt);
+    this.updatePlayerFields(dt);
     this.updateTelegraphs(dt);
     this.updateHazard(dt);
     if ((this.settings.autoFire || this.input.firing || this.input.keys.has('KeyJ')) && this.elapsed >= this.lastShot) this.shoot();
@@ -269,11 +290,11 @@ export class CombatWorld {
 
   movePlayer(dt) {
     const move = this.input.move;
-    const speed = this.modifiers.moveSpeed * (this.elapsed < this.player.dodgeUntil ? 2.5 : 1);
+    const speed = this.modifiers.moveSpeed * this.mechanicMoveMultiplier * (this.elapsed < this.player.dodgeUntil ? 2.5 : 1);
     this.player.position.x += move.x * speed * dt;
     this.player.position.z += move.y * speed * dt;
     const radius = Math.hypot(this.player.position.x, this.player.position.z);
-    if (radius > ARENA_LIMIT - 0.7) this.player.position.multiplyScalar((ARENA_LIMIT - 0.7) / radius);
+    if (radius > this.activeArenaLimit - 0.7) this.player.position.multiplyScalar((this.activeArenaLimit - 0.7) / radius);
     this.player.model.position.copy(this.player.position);
     if (Math.hypot(move.x, move.y) > 0.1) this.player.model.rotation.y = Math.atan2(move.x, move.y);
   }
@@ -293,6 +314,10 @@ export class CombatWorld {
   }
 
   shoot() {
+    if (!this.mechanics.canShoot()) {
+      this.lastShot = this.elapsed + 0.12;
+      return;
+    }
     const autoOnly = this.settings.autoFire && !this.input.firing && !this.input.keys.has('KeyJ');
     this.lastShot = this.elapsed + 1 / (this.modifiers.fireRate * (autoOnly ? 0.55 : 1));
     const target = this.nearestEnemy();
@@ -308,27 +333,55 @@ export class CombatWorld {
 
     const origin = this.player.position.clone().add(new THREE.Vector3(0, 1.2, 0));
     const end = target.group.position.clone().add(new THREE.Vector3(0, target.boss ? 1.6 : 0.85, 0));
-    this.createTracer(origin, end);
+    this.mechanics.onPlayerShot();
     this.audio.play('shot');
-    const weakPoint = manual && alignment > 0.92;
+    const hit = this.calculatePlayerHit(target, manual, alignment);
+    if (['projectile', 'fieldProjectile'].includes(this.character.combatProfile.fireModel)) {
+      this.launchPlayerProjectile(origin, target, hit);
+      return;
+    }
+    this.createTracer(origin, end);
+    this.applyResolvedHit(target, hit, true);
+  }
+
+  calculatePlayerHit(target, manual, alignment = 1) {
+    let weakPoint = manual && alignment > 0.92;
+    if (this.character.id === 'roa' && target.surveyUntil > this.elapsed) weakPoint = true;
     const broken = target.brokenUntil > this.elapsed;
     const gearHit = resolveShotModifiers(this.modifiers, this.elapsed, manual);
     const mechanicHit = this.mechanics.modifyHit(target, { weakPoint, manual });
     const armorDamage = target.archetype.trait === 'frontArmor' && !weakPoint ? 0.34 : 1;
     const armorBreak = target.archetype.trait === 'frontArmor' && !weakPoint ? 1.28 : 1;
     const markMultiplier = target.markedUntil > this.elapsed ? 1.12 : 1;
-    const damage = this.modifiers.damage * (weakPoint ? 1.35 : 1) * (broken ? 2.2 : 1) * gearHit.damageMultiplier * mechanicHit.hpMultiplier * armorDamage * markMultiplier;
-    const breakDamage = this.modifiers.breakDamage * (weakPoint ? 1.2 : 1) * gearHit.breakMultiplier * mechanicHit.breakMultiplier * armorBreak;
-    target.hp -= damage;
-    target.break -= breakDamage;
-    this.applyCharacterShotEffect(target, { damage, breakDamage, weakPoint });
-    this.stats.hits += 1;
+    let characterDamage = 1;
+    let characterBreak = 1;
+    const moving = Math.hypot(this.input.move.x, this.input.move.y) > 0.2;
+    if (this.character.id === 'noir' && moving) characterDamage *= 1.22;
+    if (this.character.id === 'noir' && this.characterState.wingChargeUntil > this.elapsed) {
+      characterDamage *= 1.55;
+      this.characterState.wingChargeUntil = 0;
+    }
+    if (this.character.id === 'jigsaw' && this.characterState.droneDamageUntil > this.elapsed) characterDamage *= 1.18;
+    if (this.character.id === 'yura' && this.characterState.ambushUntil > this.elapsed) characterDamage *= 1.5;
+    if (this.character.id === 'neko' && moving) characterDamage *= this.characterState.rushUntil > this.elapsed ? 1.34 : 1.2;
+    if (this.character.id === 'mora' && target.controlUntil > this.elapsed) characterBreak *= 1.35;
+    const damage = this.modifiers.damage * (weakPoint ? 1.35 : 1) * (broken ? 2.2 : 1) * gearHit.damageMultiplier * mechanicHit.hpMultiplier * armorDamage * markMultiplier * characterDamage;
+    const breakDamage = this.modifiers.breakDamage * (weakPoint ? 1.2 : 1) * gearHit.breakMultiplier * mechanicHit.breakMultiplier * armorBreak * characterBreak;
+    return { damage, breakDamage, weakPoint, manual };
+  }
+
+  applyResolvedHit(target, hit, primary = false) {
+    if (!target || target.dead) return;
+    target.hp -= hit.damage;
+    target.break -= hit.breakDamage;
+    this.applyCharacterShotEffect(target, hit);
+    if (primary) this.stats.hits += 1;
     this.combo += 1;
     this.comboTimer = 1.4;
-    this.score += Math.round(damage * 8 + this.combo * 2 + (weakPoint ? 50 : 0));
-    this.flashEnemy(target, weakPoint ? '#fff2a6' : '#ffffff');
-    this.audio.play(weakPoint ? 'weak' : 'hit');
-    if (weakPoint) {
+    this.score += Math.round(hit.damage * 8 + this.combo * 2 + (hit.weakPoint ? 50 : 0));
+    this.flashEnemy(target, hit.weakPoint ? '#fff2a6' : '#ffffff');
+    this.audio.play(hit.weakPoint ? 'weak' : 'hit');
+    if (hit.weakPoint) {
       this.renderFreezeFrames = Math.max(this.renderFreezeFrames, 1);
       this.cameraShake = Math.max(this.cameraShake, 0.08);
     }
@@ -374,17 +427,125 @@ export class CombatWorld {
       target.markedUntil = this.elapsed + 5;
       target.core.material.color.set('#53f6d6');
     }
-    if (this.character.id === 'bibi') {
-      this.pulse(target.group.position, '#ffd166', 2.4);
+    if (this.character.id === 'serin' && this.characterState.shotCounter % 12 === 0) {
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2.5);
+    }
+    if (this.character.id === 'mora') {
+      target.controlUntil = Math.max(target.controlUntil ?? 0, this.elapsed + 0.45);
+      target.threadStacks = (target.threadStacks ?? 0) + 1;
+      if (target.threadStacks % 5 === 0) target.break -= hit.breakDamage * 1.2;
+    }
+    if (this.character.id === 'marin') {
+      this.pulse(target.group.position, '#6ee7ff', 2.1);
       for (const enemy of this.enemies) {
-        if (enemy.dead || enemy === target || enemy.group.position.distanceTo(target.group.position) > 2.8) continue;
-        enemy.hp -= hit.damage * 0.58;
-        enemy.break -= hit.breakDamage * 0.42;
+        if (enemy.dead || enemy === target || enemy.group.position.distanceTo(target.group.position) > 3.4) continue;
+        enemy.break -= hit.breakDamage * 0.5;
+        enemy.hp -= hit.damage * 0.28;
         if (enemy.hp <= 0) this.killEnemy(enemy);
       }
     }
-    if (this.character.id === 'serin' && this.characterState.shotCounter % 12 === 0) {
-      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 2.5);
+    if (this.character.id === 'jigsaw' && this.characterState.shotCounter % 10 === 0) {
+      target.hp -= 18;
+      target.break -= 12;
+      this.pulse(target.group.position, '#b68cff', 1.5);
+    }
+    if (this.character.id === 'yura') {
+      target.foxMarks = (target.foxMarks ?? 0) + 1;
+      if (target.foxMarks >= 3) {
+        target.foxMarks = 0;
+        target.hp -= hit.damage * 0.85;
+        this.pulse(target.group.position, '#ff7fb7', 2.2);
+      }
+    }
+    if (this.character.id === 'sora') {
+      const away = target.group.position.clone().sub(this.player.position).setY(0).normalize();
+      target.group.position.addScaledVector(away, target.boss ? 0.15 : 0.42);
+    }
+  }
+
+  launchPlayerProjectile(origin, target, hit) {
+    const mortar = this.character.id === 'lumi';
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(mortar ? 0.22 : 0.17, 12, 8),
+      new THREE.MeshBasicMaterial({ color: mortar ? '#b68cff' : '#ffd166' })
+    );
+    mesh.position.copy(origin);
+    this.scene.add(mesh);
+    const targetPosition = target.group.position.clone().setY(0.8);
+    const velocity = targetPosition.clone().sub(origin).normalize().multiplyScalar(mortar ? 8 : 10.5);
+    this.playerProjectiles.push({ mesh, velocity, target, targetPosition, hit, life: 2.6, radius: mortar ? 3.5 : 2.8, mortar });
+  }
+
+  updatePlayerProjectiles(dt) {
+    for (let index = this.playerProjectiles.length - 1; index >= 0; index -= 1) {
+      const projectile = this.playerProjectiles[index];
+      if (!projectile.target.dead) projectile.targetPosition.copy(projectile.target.group.position).setY(0.8);
+      const desired = projectile.targetPosition.clone().sub(projectile.mesh.position).normalize();
+      projectile.velocity.lerp(desired.multiplyScalar(projectile.mortar ? 8 : 10.5), Math.min(1, dt * 4));
+      projectile.mesh.position.addScaledVector(projectile.velocity, dt);
+      projectile.life -= dt;
+      if (projectile.mesh.position.distanceTo(projectile.targetPosition) < 0.65 || projectile.life <= 0) {
+        this.detonatePlayerProjectile(projectile);
+        this.scene.remove(projectile.mesh);
+        projectile.mesh.geometry.dispose();
+        projectile.mesh.material.dispose();
+        this.playerProjectiles.splice(index, 1);
+      }
+    }
+  }
+
+  detonatePlayerProjectile(projectile) {
+    const position = projectile.targetPosition.clone().setY(0);
+    this.pulse(position, projectile.mortar ? '#b68cff' : '#ffd166', projectile.radius);
+    let primaryApplied = false;
+    for (const enemy of this.enemies) {
+      if (enemy.dead || enemy.group.position.distanceTo(position) > projectile.radius) continue;
+      const primary = enemy === projectile.target && !primaryApplied;
+      this.applyResolvedHit(enemy, {
+        ...projectile.hit,
+        damage: projectile.hit.damage * (primary ? 1 : 0.52),
+        breakDamage: projectile.hit.breakDamage * (primary ? 1 : 0.44),
+        weakPoint: primary ? projectile.hit.weakPoint : false
+      }, primary);
+      if (primary) primaryApplied = true;
+    }
+    if (projectile.mortar) this.createPlayerField(position, 5.2, 3.5);
+  }
+
+  createPlayerField(position, duration = 5, radius = 3.5) {
+    const mesh = new THREE.Mesh(
+      new THREE.CircleGeometry(radius, 40),
+      new THREE.MeshBasicMaterial({ color: '#9e82ff', transparent: true, opacity: 0.16, side: THREE.DoubleSide })
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.copy(position).setY(0.045);
+    this.scene.add(mesh);
+    this.playerFields.push({ mesh, duration, radius, nextTick: this.elapsed });
+  }
+
+  updatePlayerFields(dt) {
+    for (let index = this.playerFields.length - 1; index >= 0; index -= 1) {
+      const field = this.playerFields[index];
+      field.duration -= dt;
+      field.mesh.material.opacity = 0.12 + Math.sin(this.elapsed * 4) * 0.05;
+      for (const enemy of this.enemies) {
+        if (!enemy.dead && enemy.group.position.distanceTo(field.mesh.position) <= field.radius) enemy.fieldSlowUntil = this.elapsed + 0.18;
+      }
+      if (this.elapsed >= field.nextTick) {
+        field.nextTick = this.elapsed + 0.65;
+        for (const enemy of this.enemies) {
+          if (enemy.dead || enemy.group.position.distanceTo(field.mesh.position) > field.radius) continue;
+          enemy.hp -= 3.5 * this.modifiers.skillPower;
+          enemy.break -= 2;
+          if (enemy.hp <= 0) this.killEnemy(enemy);
+        }
+      }
+      if (field.duration <= 0) {
+        this.scene.remove(field.mesh);
+        field.mesh.geometry.dispose();
+        field.mesh.material.dispose();
+        this.playerFields.splice(index, 1);
+      }
     }
   }
 
@@ -437,18 +598,24 @@ export class CombatWorld {
         enemy.group.position.y = Math.sin(this.elapsed * 18) * 0.08;
         continue;
       }
+      if ((enemy.controlUntil ?? 0) > this.elapsed) {
+        enemy.group.position.y = Math.sin(this.elapsed * 12) * 0.035;
+        continue;
+      }
       enemy.group.position.y = 0;
       const toPlayer = this.player.position.clone().sub(enemy.group.position).setY(0);
       const distance = toPlayer.length();
       const ideal = enemy.archetype.preferredRange;
+      const fieldSlow = (enemy.fieldSlowUntil ?? 0) > this.elapsed ? 0.52 : 1;
+      const motionScale = this.enemyTimeScale * fieldSlow;
       if (enemy.archetype.trait === 'stationary') {
         // Turrets trade mobility for pressure.
       } else if (enemy.archetype.trait === 'kite' && distance < ideal) {
-        enemy.group.position.addScaledVector(toPlayer.normalize(), -enemy.speed * dt);
-      } else if (distance > ideal) enemy.group.position.addScaledVector(toPlayer.normalize(), enemy.speed * dt);
+        enemy.group.position.addScaledVector(toPlayer.normalize(), -enemy.speed * dt * motionScale);
+      } else if (distance > ideal) enemy.group.position.addScaledVector(toPlayer.normalize(), enemy.speed * dt * motionScale);
       else {
         const tangent = new THREE.Vector3(-toPlayer.z, 0, toPlayer.x).normalize();
-        enemy.group.position.addScaledVector(tangent, enemy.speed * 0.5 * enemy.orbit * dt);
+        enemy.group.position.addScaledVector(tangent, enemy.speed * 0.5 * enemy.orbit * dt * motionScale);
       }
       const projectileBudget = 2 + this.stage.chapter;
       if (this.elapsed >= enemy.nextShot && distance < 15 && this.projectiles.length < projectileBudget) {
@@ -544,7 +711,8 @@ export class CombatWorld {
   damagePlayer(amount, type = 'projectile', invulnerability = 0.35) {
     if (!this.running || this.elapsed <= this.player.invulnerableUntil) return 0;
     const cleanseMultiplier = type === 'hazard' && this.characterState.cleanseUntil > this.elapsed ? 0.4 : 1;
-    const damage = resolveIncomingDamage(amount * cleanseMultiplier, this.modifiers, {
+    const guardMultiplier = this.character.id === 'sora' && this.characterState.guardUntil > this.elapsed ? 0.34 : 1;
+    const damage = resolveIncomingDamage(amount * cleanseMultiplier * guardMultiplier, this.modifiers, {
       type,
       moveStrength: Math.hypot(this.input?.move.x ?? 0, this.input?.move.y ?? 0)
     });
@@ -623,7 +791,7 @@ export class CombatWorld {
 
   castSkill() {
     if (this.elapsed < this.skillReadyAt) return;
-    this.skillReadyAt = this.elapsed + this.character.skill.cooldown * (1 + (this.modifiers.normalCooldown ?? 0));
+    this.skillReadyAt = this.elapsed + this.character.skill.cooldown * (1 + (this.modifiers.normalCooldown ?? 0)) * this.mechanics.skillCooldownMultiplier();
     this.audio.play('skill');
     if (this.character.id === 'nari') {
       this.mechanics.assistObjective();
@@ -637,6 +805,81 @@ export class CombatWorld {
       this.characterState.cleanseUntil = this.elapsed + 5.5;
       this.pulse(this.player.position, '#8dffc2', 5.2);
       this.score += 220;
+      return;
+    }
+    if (this.character.id === 'noir') {
+      const direction = new THREE.Vector3(this.input.aim.x, 0, this.input.aim.y).normalize();
+      this.player.position.addScaledVector(direction, 4.2);
+      this.player.invulnerableUntil = this.elapsed + 0.7;
+      this.characterState.wingChargeUntil = this.elapsed + 5;
+      this.pulse(this.player.position, '#9d7dff', 4.2);
+      return;
+    }
+    if (this.character.id === 'mora') {
+      this.pulse(this.player.position, '#b68cff', 8.5);
+      for (const enemy of this.enemies) {
+        if (enemy.dead || enemy.group.position.distanceTo(this.player.position) > 9) continue;
+        enemy.controlUntil = this.elapsed + 4;
+        enemy.break -= 16 * this.modifiers.skillPower;
+      }
+      return;
+    }
+    if (this.character.id === 'roa') {
+      const target = this.nearestEnemy();
+      if (target) {
+        target.surveyUntil = this.elapsed + 8;
+        target.core.material.color.set('#ffef9d');
+        this.pulse(target.group.position, '#ffef9d', 2.8);
+      }
+      return;
+    }
+    if (this.character.id === 'marin') {
+      for (let index = this.projectiles.length - 1; index >= 0; index -= 1) {
+        if (this.projectiles[index].mesh.position.distanceTo(this.player.position) <= 8) this.removeProjectile(index);
+      }
+      const direction = new THREE.Vector3(this.input.aim.x, 0, this.input.aim.y).normalize();
+      this.player.position.addScaledVector(direction, 3.2);
+      this.player.invulnerableUntil = this.elapsed + 0.48;
+      this.pulse(this.player.position, '#6ee7ff', 6.2);
+      return;
+    }
+    if (this.character.id === 'jigsaw') {
+      this.mechanics.assistObjective();
+      this.mechanics.assistObjective();
+      this.characterState.droneDamageUntil = this.elapsed + 7;
+      this.pulse(this.player.position, '#b68cff', 6);
+      this.score += 320;
+      return;
+    }
+    if (this.character.id === 'yura') {
+      const target = this.nearestEnemy();
+      if (target) {
+        const through = target.group.position.clone().sub(this.player.position).setY(0).normalize();
+        this.player.position.copy(target.group.position).addScaledVector(through, 1.8).setY(0);
+        this.player.invulnerableUntil = this.elapsed + 0.55;
+        this.characterState.ambushUntil = this.elapsed + 3.2;
+        this.pulse(this.player.position, '#ff7fb7', 3.2);
+      }
+      return;
+    }
+    if (this.character.id === 'lumi') {
+      const target = this.nearestEnemy();
+      this.createPlayerField(target?.group.position ?? this.player.position, 7, 5.2);
+      this.pulse(target?.group.position ?? this.player.position, '#9e82ff', 5.2);
+      return;
+    }
+    if (this.character.id === 'sora') {
+      this.characterState.guardUntil = this.elapsed + 6;
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 18);
+      this.pulse(this.player.position, '#5fb8ff', 5.5);
+      return;
+    }
+    if (this.character.id === 'neko') {
+      this.mechanics.assistObjective();
+      this.characterState.rushUntil = this.elapsed + 6;
+      this.player.dodgeUntil = this.elapsed + 0.8;
+      this.player.invulnerableUntil = this.elapsed + 0.6;
+      this.pulse(this.player.position, '#6dffb2', 4.5);
       return;
     }
     const bibi = this.character.id === 'bibi';
@@ -686,6 +929,13 @@ export class CombatWorld {
     this.camera.aspect = width / Math.max(1, height);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+  }
+
+  applyRendererQuality(resize = true) {
+    this.qualityConfig = resolveQualityConfig(this.qualityState, window.devicePixelRatio);
+    this.renderer.setPixelRatio(this.qualityConfig.dpr);
+    this.renderer.shadowMap.enabled = this.qualityConfig.shadows;
+    if (resize && this.camera) this.resize();
   }
 
   destroy() {

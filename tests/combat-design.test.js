@@ -3,13 +3,19 @@ import { characterById } from '../src/data/characters.js';
 import { enemyArchetypes, resolveEnemyArchetype } from '../src/data/enemies.js';
 import { starterLoadout } from '../src/data/equipment.js';
 import { resolveCombatModifiers, resolveIncomingDamage, resolveShotModifiers } from '../src/game/CombatModifiers.js';
+import { createQualityState, resolveQualityConfig, sampleAdaptiveQuality } from '../src/game/AdaptiveQuality.js';
 import { stageMechanicRules } from '../src/game/StageMechanicDirector.js';
+import { canFullscreen, enterFullscreen, getFullscreenElement, leaveFullscreen } from '../src/systems/fullscreen.js';
 
 describe('first chapter runtime differentiation', () => {
-  it('maps all ten stages to ten distinct mechanic behaviors', () => {
-    expect(Object.keys(stageMechanicRules)).toHaveLength(10);
-    expect(new Set(Object.values(stageMechanicRules).map((rule) => rule.type)).size).toBe(10);
-    for (let stage = 1; stage <= 10; stage += 1) expect(stageMechanicRules[`1-${stage}`]).toBeTruthy();
+  it('maps all fifty stages to distinct runtime mechanic identities', () => {
+    expect(Object.keys(stageMechanicRules)).toHaveLength(50);
+    expect(new Set(Object.values(stageMechanicRules).map((rule) => rule.type)).size).toBe(50);
+    for (let chapter = 1; chapter <= 5; chapter += 1) {
+      for (let stage = 1; stage <= 10; stage += 1) expect(stageMechanicRules[`${chapter}-${stage}`]).toBeTruthy();
+    }
+    const behaviors = new Set(Object.values(stageMechanicRules).flatMap((rule) => rule.behaviors ?? []));
+    expect([...behaviors]).toEqual(expect.arrayContaining(['fog', 'hazard', 'overheat', 'limitedAmmo', 'phase', 'safeZone', 'links', 'shrink']));
   });
 
   it('defines enemies with tactical traits instead of health-only variants', () => {
@@ -27,6 +33,15 @@ describe('first chapter runtime differentiation', () => {
     expect(new Set(operators.map((operator) => operator.skill.id)).size).toBe(4);
     expect(operators[0].unlock.type).toBe('starter');
     for (const operator of operators.slice(1)) expect(operator.unlock.stage.startsWith('1-')).toBe(true);
+  });
+
+  it('assigns every operator a distinct tactical hook across all required fire families', () => {
+    const operators = Object.values(characterById);
+    expect(operators).toHaveLength(13);
+    expect(new Set(operators.map((operator) => operator.combatProfile.tacticalHook)).size).toBe(13);
+    const fireModels = new Set(operators.map((operator) => operator.combatProfile.fireModel));
+    expect([...fireModels]).toEqual(expect.arrayContaining(['hitscan', 'projectile', 'shotgun', 'fieldProjectile']));
+    expect(fireModels.size).toBeGreaterThanOrEqual(9);
   });
 });
 
@@ -54,5 +69,44 @@ describe('equipment changes combat rules', () => {
     const offBeat = resolveShotModifiers(modifiers, 0.36, true);
     expect(onBeat.breakMultiplier).toBeGreaterThan(offBeat.breakMultiplier);
     expect(offBeat.damageMultiplier).toBeLessThan(1);
+  });
+});
+
+describe('mobile adaptive quality', () => {
+  it('caps low mode at DPR 1 and a 30fps render target', () => {
+    const config = resolveQualityConfig(createQualityState('low'), 3);
+    expect(config).toMatchObject({ dpr: 1, shadows: false, renderFps: 30 });
+  });
+
+  it('degrades auto quality in measured stages without changing the fixed simulation tick', () => {
+    let state = createQualityState('auto');
+    ({ state } = sampleAdaptiveQuality(state, 4, true));
+    expect(state.tier).toBe('balanced');
+    expect(resolveQualityConfig(state, 2)).toMatchObject({ dpr: 1.15, shadows: false, renderFps: 60 });
+    ({ state } = sampleAdaptiveQuality(state, 4, true));
+    expect(state.tier).toBe('low');
+    expect(resolveQualityConfig(state, 2).renderFps).toBe(30);
+  });
+});
+
+describe('mobile fullscreen bridge', () => {
+  it('enters and leaves the standards-based Fullscreen API', async () => {
+    const doc = { fullscreenElement: null };
+    const element = {
+      ownerDocument: doc,
+      requestFullscreen: async () => { doc.fullscreenElement = element; }
+    };
+    doc.exitFullscreen = async () => { doc.fullscreenElement = null; };
+    expect(canFullscreen(element)).toBe(true);
+    expect(await enterFullscreen(element)).toBe(true);
+    expect(getFullscreenElement(doc)).toBe(element);
+    expect(await leaveFullscreen(doc)).toBe(true);
+    expect(getFullscreenElement(doc)).toBeNull();
+  });
+
+  it('fails safely when an embedded browser blocks fullscreen', async () => {
+    const element = { ownerDocument: {}, requestFullscreen: async () => { throw new Error('denied'); } };
+    expect(await enterFullscreen(element)).toBe(false);
+    expect(canFullscreen({})).toBe(false);
   });
 });
