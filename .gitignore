@@ -1,2 +1,6 @@
 /곧 삭제될 폴더
 구현계획.md
+node_modules/
+dist/
+.vite.*.log
+/node_modules
