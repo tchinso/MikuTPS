@@ -4,7 +4,9 @@ import { resolveEnemyArchetype } from '../data/enemies.js';
 import { resolveCombatModifiers, resolveIncomingDamage, resolveShotModifiers } from './CombatModifiers.js';
 import { CombatAudio } from './CombatAudio.js';
 import { createQualityState, resolveQualityConfig, sampleAdaptiveQuality } from './AdaptiveQuality.js';
+import { BOSS_PHASES, resolveBossPhase, resolveBossTelegraphOffsets, resolveBossVolleyAngles } from './BossStateMachine.js';
 import { InputController } from './InputController.js';
+import { ObjectPool } from './ObjectPool.js';
 import { StageMechanicDirector } from './StageMechanicDirector.js';
 
 const FIXED_DT = 1 / 60;
@@ -45,9 +47,10 @@ export class CombatWorld {
     this.enemies = [];
     this.effects = [];
     this.telegraphs = [];
+    this.bossCastCounter = 0;
     this.currentWave = 0;
     this.wavePending = false;
-    this.stats = { shots: 0, hits: 0, damageTaken: 0, breaks: 0 };
+    this.stats = { shots: 0, hits: 0, damageTaken: 0, breaks: 0, mechanicActions: 0 };
     this.characterState = { shotCounter: 0, cleanseUntil: 0 };
   }
 
@@ -65,6 +68,7 @@ export class CombatWorld {
     this.renderer.domElement.className = 'combat-canvas';
     this.root.prepend(this.renderer.domElement);
 
+    this.setupRuntimePools();
     this.buildArena();
     await this.buildPlayer();
     this.mechanics = new StageMechanicDirector(this);
@@ -130,6 +134,78 @@ export class CombatWorld {
       obstacle.receiveShadow = true;
       this.scene.add(obstacle);
     }
+  }
+
+  setupRuntimePools() {
+    const disposeObject = (object) => {
+      this.scene?.remove(object);
+      object.geometry?.dispose?.();
+      object.material?.dispose?.();
+    };
+    const meshPool = ({ geometry, material, maxRetained }) => new ObjectPool({
+      create: () => {
+        const mesh = new THREE.Mesh(geometry(), material());
+        mesh.userData.pooled = true;
+        return mesh;
+      },
+      activate: (mesh) => {
+        mesh.visible = true;
+        this.scene.add(mesh);
+      },
+      reset: (mesh) => {
+        this.scene.remove(mesh);
+        mesh.visible = false;
+        mesh.position.set(0, 0, 0);
+        mesh.rotation.set(0, 0, 0);
+        mesh.scale.setScalar(1);
+      },
+      dispose: disposeObject,
+      maxRetained
+    });
+    this.pools = {
+      tracer: new ObjectPool({
+        create: () => {
+          const positions = new Float32Array(6);
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+          const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: '#9ffff1', transparent: true, opacity: 0.9 }));
+          line.frustumCulled = false;
+          line.userData.pooled = true;
+          return line;
+        },
+        activate: (line) => {
+          line.visible = true;
+          line.material.opacity = 0.9;
+          this.scene.add(line);
+        },
+        reset: (line) => {
+          this.scene.remove(line);
+          line.visible = false;
+        },
+        dispose: disposeObject,
+        maxRetained: 24
+      }),
+      pulse: meshPool({
+        geometry: () => new THREE.RingGeometry(0.2, 0.33, 32),
+        material: () => new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
+        maxRetained: 24
+      }),
+      enemyProjectile: meshPool({
+        geometry: () => new THREE.SphereGeometry(0.2, 10, 8),
+        material: () => new THREE.MeshBasicMaterial(),
+        maxRetained: 16
+      }),
+      playerProjectile: meshPool({
+        geometry: () => new THREE.SphereGeometry(0.22, 12, 8),
+        material: () => new THREE.MeshBasicMaterial(),
+        maxRetained: 10
+      }),
+      telegraph: meshPool({
+        geometry: () => new THREE.RingGeometry(0.15, 0.28, 48),
+        material: () => new THREE.MeshBasicMaterial({ color: '#ff4f86', transparent: true, opacity: 0.72, side: THREE.DoubleSide }),
+        maxRetained: 10
+      })
+    };
   }
 
   async buildPlayer() {
@@ -224,7 +300,8 @@ export class CombatWorld {
       group, body, core, archetype, hp, maxHp: hp, break: breakValue, maxBreak: breakValue,
       brokenUntil: 0, speed: (boss ? 1.7 : 2.05) * archetype.speed,
       nextShot: this.elapsed + (this.stage.chapter === 1 ? 3.4 : 2.2) + (seed % 5) * 0.42 + Math.random() * 0.35,
-      nextSpecial: boss ? this.elapsed + 4.5 : Infinity, phase: seed % 2, dead: false, boss, targetable: true, orbit: Math.random() > 0.5 ? 1 : -1
+      nextSpecial: boss ? this.elapsed + 4.5 : Infinity, phase: boss ? 1 : seed % 2,
+      dead: false, boss, targetable: true, orbit: Math.random() > 0.5 ? 1 : -1
     });
   }
 
@@ -515,12 +592,10 @@ export class CombatWorld {
 
   launchPlayerProjectile(origin, target, hit) {
     const mortar = this.character.id === 'lumi';
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(mortar ? 0.22 : 0.17, 12, 8),
-      new THREE.MeshBasicMaterial({ color: mortar ? '#b68cff' : '#ffd166' })
-    );
+    const mesh = this.pools.playerProjectile.acquire();
+    mesh.material.color.set(mortar ? '#b68cff' : '#ffd166');
+    mesh.scale.setScalar(mortar ? 1 : 0.77);
     mesh.position.copy(origin);
-    this.scene.add(mesh);
     const targetPosition = target.group.position.clone().setY(0.8);
     const velocity = targetPosition.clone().sub(origin).normalize().multiplyScalar(mortar ? 8 : 10.5);
     this.playerProjectiles.push({ mesh, velocity, target, targetPosition, hit, life: 2.6, radius: mortar ? 3.5 : 2.8, mortar });
@@ -536,9 +611,7 @@ export class CombatWorld {
       projectile.life -= dt;
       if (projectile.mesh.position.distanceTo(projectile.targetPosition) < 0.65 || projectile.life <= 0) {
         this.detonatePlayerProjectile(projectile);
-        this.scene.remove(projectile.mesh);
-        projectile.mesh.geometry.dispose();
-        projectile.mesh.material.dispose();
+        this.pools.playerProjectile.release(projectile.mesh);
         this.playerProjectiles.splice(index, 1);
       }
     }
@@ -600,10 +673,16 @@ export class CombatWorld {
   }
 
   createTracer(start, end) {
-    const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
-    const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: '#9ffff1', transparent: true, opacity: 0.9 }));
-    this.scene.add(line);
-    this.effects.push({ object: line, life: 0.08, maxLife: 0.08 });
+    const line = this.pools.tracer.acquire();
+    const positions = line.geometry.attributes.position.array;
+    positions[0] = start.x;
+    positions[1] = start.y;
+    positions[2] = start.z;
+    positions[3] = end.x;
+    positions[4] = end.y;
+    positions[5] = end.z;
+    line.geometry.attributes.position.needsUpdate = true;
+    this.effects.push({ object: line, life: 0.08, maxLife: 0.08, pool: this.pools.tracer });
   }
 
   flashEnemy(enemy, color) {
@@ -613,15 +692,13 @@ export class CombatWorld {
   }
 
   pulse(position, color, size = 1.8) {
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.2, 0.33, 32),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
-    );
+    const ring = this.pools.pulse.acquire();
+    ring.material.color.set(color);
+    ring.material.opacity = 0.9;
     ring.rotation.x = -Math.PI / 2;
     ring.position.copy(position).setY(0.08);
     ring.userData.targetScale = size;
-    this.scene.add(ring);
-    this.effects.push({ object: ring, life: 0.45, maxLife: 0.45, pulse: true });
+    this.effects.push({ object: ring, life: 0.45, maxLife: 0.45, pulse: true, pool: this.pools.pulse });
   }
 
   killEnemy(enemy) {
@@ -637,6 +714,7 @@ export class CombatWorld {
   updateEnemies(dt) {
     for (const enemy of this.enemies) {
       if (enemy.dead) continue;
+      const bossPhase = enemy.boss ? this.updateBossPhase(enemy) : null;
       enemy.group.rotation.y += dt * enemy.orbit;
       if (enemy.archetype.trait === 'cloak') {
         const visible = (this.elapsed + enemy.group.id * 0.07) % 3.6 < 1.55 || enemy.brokenUntil > this.elapsed;
@@ -658,69 +736,109 @@ export class CombatWorld {
       const ideal = enemy.archetype.preferredRange;
       const fieldSlow = (enemy.fieldSlowUntil ?? 0) > this.elapsed ? 0.52 : 1;
       const motionScale = this.enemyTimeScale * fieldSlow;
+      const speed = enemy.speed * (bossPhase?.moveMultiplier ?? 1);
       if (enemy.archetype.trait === 'stationary') {
         // Turrets trade mobility for pressure.
       } else if (enemy.archetype.trait === 'kite' && distance < ideal) {
-        enemy.group.position.addScaledVector(toPlayer.normalize(), -enemy.speed * dt * motionScale);
-      } else if (distance > ideal) enemy.group.position.addScaledVector(toPlayer.normalize(), enemy.speed * dt * motionScale);
+        enemy.group.position.addScaledVector(toPlayer.normalize(), -speed * dt * motionScale);
+      } else if (distance > ideal) enemy.group.position.addScaledVector(toPlayer.normalize(), speed * dt * motionScale);
       else {
         const tangent = new THREE.Vector3(-toPlayer.z, 0, toPlayer.x).normalize();
-        enemy.group.position.addScaledVector(tangent, enemy.speed * 0.5 * enemy.orbit * dt * motionScale);
+        enemy.group.position.addScaledVector(tangent, speed * 0.5 * enemy.orbit * dt * motionScale);
       }
-      const projectileBudget = 2 + this.stage.chapter;
+      const projectileBudget = Math.min(9, 2 + this.stage.chapter + (bossPhase?.id ?? 0));
       if (this.elapsed >= enemy.nextShot && distance < 15 && this.projectiles.length < projectileBudget) {
-        this.enemyShoot(enemy);
-        enemy.nextShot = this.elapsed + enemy.archetype.fireInterval + Math.random() * 0.65;
+        this.enemyShoot(enemy, projectileBudget);
+        enemy.nextShot = this.elapsed + enemy.archetype.fireInterval * (bossPhase?.fireIntervalMultiplier ?? 1) + Math.random() * 0.65;
       }
-      if (enemy.boss && this.elapsed >= enemy.nextSpecial) {
+      const hasActiveSpecial = this.telegraphs.some((telegraph) => telegraph.enemy === enemy);
+      if (enemy.boss && this.elapsed >= enemy.nextSpecial && !hasActiveSpecial) {
         this.startBossTelegraph(enemy);
-        enemy.nextSpecial = this.elapsed + 6.2;
+        enemy.nextSpecial = this.elapsed + bossPhase.specialCooldown;
       }
     }
   }
 
-  enemyShoot(enemy) {
+  updateBossPhase(enemy) {
+    const nextPhase = resolveBossPhase(enemy.hp, enemy.maxHp);
+    if (enemy.phase !== nextPhase.id) {
+      enemy.phase = nextPhase.id;
+      enemy.body.material.emissive.set(nextPhase.color);
+      enemy.core.material.color.set(nextPhase.color);
+      enemy.nextSpecial = Math.max(enemy.nextSpecial, this.elapsed + 1.15);
+      this.pulse(enemy.group.position, nextPhase.color, 4.6 + nextPhase.id);
+      this.root.classList.add('boss-phase-shift');
+      setTimeout(() => this.root.classList.remove('boss-phase-shift'), 180);
+    }
+    return nextPhase;
+  }
+
+  enemyShoot(enemy, projectileBudget = 9) {
     const start = enemy.group.position.clone().add(new THREE.Vector3(0, enemy.boss ? 1.6 : 0.8, 0));
-    const direction = this.player.position.clone().sub(enemy.group.position).setY(0.1).normalize();
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(enemy.boss ? 0.2 : 0.13, 10, 8),
-      new THREE.MeshBasicMaterial({ color: enemy.archetype.color })
-    );
-    mesh.position.copy(start);
-    this.scene.add(mesh);
+    const baseDirection = this.player.position.clone().sub(enemy.group.position).setY(0.1).normalize();
+    const phase = enemy.boss ? BOSS_PHASES[enemy.phase - 1] : null;
+    const capacity = Math.max(0, projectileBudget - this.projectiles.length);
+    const angles = (phase ? resolveBossVolleyAngles(phase) : [0]).slice(0, capacity);
     const baseDamage = (3 + this.stage.chapter) * enemy.archetype.damage;
-    this.projectiles.push({ mesh, velocity: direction.multiplyScalar(enemy.archetype.projectileSpeed), life: 4, damage: baseDamage });
+    for (const angle of angles) {
+      const mesh = this.pools.enemyProjectile.acquire();
+      mesh.material.color.set(phase?.color ?? enemy.archetype.color);
+      mesh.scale.setScalar(enemy.boss ? 1 : 0.65);
+      mesh.position.copy(start);
+      const direction = baseDirection.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+      const speed = enemy.archetype.projectileSpeed * (phase?.projectileSpeedMultiplier ?? 1);
+      this.projectiles.push({ mesh, velocity: direction.multiplyScalar(speed), life: 4, damage: baseDamage });
+    }
   }
 
   startBossTelegraph(enemy) {
-    const mesh = new THREE.Mesh(
-      new THREE.RingGeometry(0.15, 0.28, 48),
-      new THREE.MeshBasicMaterial({ color: '#ff4f86', transparent: true, opacity: 0.72, side: THREE.DoubleSide })
-    );
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.copy(this.player.position).setY(0.07);
-    this.scene.add(mesh);
-    this.telegraphs.push({ mesh, enemy, remaining: 1.35, duration: 1.35, radius: 2.7 });
+    const phase = BOSS_PHASES[enemy.phase - 1];
+    const offsets = resolveBossTelegraphOffsets(phase);
+    const towardPlayer = this.player.position.clone().sub(enemy.group.position).setY(0).normalize();
+    const side = new THREE.Vector3(-towardPlayer.z, 0, towardPlayer.x);
+    const spacing = phase.telegraphRadius * (phase.id === 2 ? 1.15 : 1.75);
+    const castId = ++this.bossCastCounter;
+    for (const offset of offsets) {
+      const mesh = this.pools.telegraph.acquire();
+      mesh.material.color.set(phase.color);
+      mesh.material.opacity = 0.72;
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.copy(this.player.position).addScaledVector(side, offset * spacing).setY(0.07);
+      this.telegraphs.push({
+        mesh, enemy, castId, remaining: phase.telegraphDuration, duration: phase.telegraphDuration,
+        radius: phase.telegraphRadius, damage: phase.specialDamage
+      });
+    }
   }
 
   updateTelegraphs(dt) {
     for (let index = this.telegraphs.length - 1; index >= 0; index -= 1) {
       const telegraph = this.telegraphs[index];
+      const interrupted = telegraph.enemy.dead || telegraph.enemy.brokenUntil > this.elapsed;
+      if (interrupted) {
+        this.removeTelegraph(index, true);
+        continue;
+      }
       telegraph.remaining -= dt;
       const progress = 1 - telegraph.remaining / telegraph.duration;
       telegraph.mesh.scale.setScalar(1 + progress * telegraph.radius * 3.2);
       telegraph.mesh.material.opacity = 0.25 + Math.sin(this.elapsed * 18) * 0.18;
       if (telegraph.remaining > 0) continue;
-      const interrupted = telegraph.enemy.dead || telegraph.enemy.brokenUntil > this.elapsed;
-      if (!interrupted) {
-        this.pulse(telegraph.mesh.position, '#ff4f86', telegraph.radius * 1.6);
-        if (telegraph.mesh.position.distanceTo(this.player.position) < telegraph.radius) this.damagePlayer(22, 'hazard');
-      } else this.score += 240;
-      this.scene.remove(telegraph.mesh);
-      telegraph.mesh.geometry.dispose();
-      telegraph.mesh.material.dispose();
-      this.telegraphs.splice(index, 1);
+      this.pulse(telegraph.mesh.position, telegraph.mesh.material.color, telegraph.radius * 1.6);
+      if (telegraph.mesh.position.distanceTo(this.player.position) < telegraph.radius) this.damagePlayer(telegraph.damage, 'hazard');
+      this.removeTelegraph(index, false);
     }
+  }
+
+  removeTelegraph(index, interrupted) {
+    const [telegraph] = this.telegraphs.splice(index, 1);
+    if (!telegraph) return;
+    if (interrupted && telegraph.enemy.lastInterruptedCast !== telegraph.castId) {
+      telegraph.enemy.lastInterruptedCast = telegraph.castId;
+      this.score += 360;
+      this.stats.mechanicActions += 1;
+    }
+    this.pools.telegraph.release(telegraph.mesh);
   }
 
   updateProjectiles(dt) {
@@ -737,9 +855,7 @@ export class CombatWorld {
 
   removeProjectile(index) {
     const [projectile] = this.projectiles.splice(index, 1);
-    this.scene.remove(projectile.mesh);
-    projectile.mesh.geometry.dispose();
-    projectile.mesh.material.dispose();
+    if (projectile) this.pools.enemyProjectile.release(projectile.mesh);
   }
 
   updateHazard(dt) {
@@ -811,9 +927,7 @@ export class CombatWorld {
       effect.object.material.opacity = Math.max(0, effect.life / effect.maxLife);
       if (effect.pulse) effect.object.scale.setScalar(1 + (1 - effect.life / effect.maxLife) * effect.object.userData.targetScale);
       if (effect.life <= 0) {
-        this.scene.remove(effect.object);
-        effect.object.geometry.dispose();
-        effect.object.material.dispose();
+        effect.pool.release(effect.object);
         this.effects.splice(i, 1);
       }
     }
@@ -828,10 +942,27 @@ export class CombatWorld {
       wave: this.currentWave,
       totalWaves: this.stage.waves,
       mechanic: this.mechanics.hud(),
+      boss: this.getBossHud(),
       shield: this.player.shield,
       skillCooldown: Math.max(0, this.skillReadyAt - this.elapsed),
       dodgeCooldown: Math.max(0, this.dodgeReadyAt - this.elapsed)
     });
+  }
+
+  getBossHud() {
+    const boss = this.enemies.find((enemy) => enemy.boss && !enemy.dead);
+    if (!boss) return null;
+    const phase = BOSS_PHASES[boss.phase - 1];
+    const breakRemaining = Math.max(0, boss.brokenUntil - this.elapsed);
+    return {
+      phase: phase.id,
+      label: phase.label,
+      color: phase.color,
+      hp: boss.hp,
+      maxHp: boss.maxHp,
+      breakRemaining,
+      state: breakRemaining > 0 ? `BREAK ${breakRemaining.toFixed(1)}s · 폭딜 ×2.2` : `위험기 ${phase.telegraphDuration.toFixed(1)}초 예고 · 브레이크로 취소`
+    };
   }
 
   dodge() {
@@ -984,7 +1115,7 @@ export class CombatWorld {
       rank: success ? this.calculateRank() : 'failed',
       elapsed: this.elapsed,
       characterId: this.character.id,
-      stats: { ...this.stats, accuracy }
+      stats: { ...this.stats, accuracy, maxHp: this.player.maxHp }
     });
   }
 
@@ -1002,12 +1133,21 @@ export class CombatWorld {
     if (resize && this.camera) this.resize();
   }
 
+  disposeRuntimePools() {
+    for (const pool of Object.values(this.pools ?? {})) pool.dispose();
+    this.effects.length = 0;
+    this.projectiles.length = 0;
+    this.playerProjectiles.length = 0;
+    this.telegraphs.length = 0;
+  }
+
   destroy() {
     this.running = false;
     cancelAnimationFrame(this.animationFrame);
     this.input?.destroy();
     this.audio?.destroy();
     this.resizeObserver?.disconnect();
+    this.disposeRuntimePools();
     this.scene?.traverse((object) => {
       object.geometry?.dispose?.();
       if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose?.());

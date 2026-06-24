@@ -1,7 +1,7 @@
 import { starterEquipmentIds, starterLoadout } from '../data/equipment.js';
 
 export const SAVE_KEY = 'mikutps.save';
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 export function createDefaultSave() {
   return {
@@ -15,6 +15,7 @@ export function createDefaultSave() {
     ownedEquipment: Object.fromEntries(starterEquipmentIds.map((id) => [id, { level: 0, locked: true }])),
     loadout: { ...starterLoadout },
     stages: {},
+    recruitmentHistory: [],
     settings: { quality: 'auto', aimAssist: 0.55, autoFire: true, screenShake: 0.7, audio: 0.8, haptics: true },
     telemetry: { characterRuns: {}, equipmentRuns: {}, stageRuns: {} }
   };
@@ -75,10 +76,7 @@ export function importSave(encoded) {
 export function applyStageResult(save, stage, result) {
   const previous = save.stages[stage.id];
   const success = result.success !== false;
-  const firstClear = success && !previous?.cleared;
-  const credits = success
-    ? stage.reward.credits + (firstClear ? stage.reward.firstClear : 0) + Math.floor(result.score / 100)
-    : Math.max(15, Math.floor(stage.reward.credits * 0.22 + result.score / 250));
+  const rewards = calculateStageRewards(stage, result, previous);
   const telemetry = {
     characterRuns: { ...save.telemetry.characterRuns },
     equipmentRuns: { ...save.telemetry.equipmentRuns },
@@ -104,14 +102,43 @@ export function applyStageResult(save, stage, result) {
   }
   return persistSave({
     ...save,
-    credits: save.credits + credits,
-    parts: save.parts + (success ? stage.reward.parts : 0),
+    credits: save.credits + rewards.credits,
+    parts: save.parts + rewards.parts,
     stages: {
       ...save.stages,
       [stage.id]: stageRecord
     },
     telemetry
   });
+}
+
+export function calculateStageRewards(stage, result, previous) {
+  const success = result.success !== false;
+  if (!success) {
+    const learning = Math.max(15, Math.floor(stage.reward.credits * 0.22 + result.score / 250));
+    return { credits: learning, parts: 0, base: learning, firstClear: 0, score: 0, time: 0, survival: 0, mechanic: 0 };
+  }
+  const firstClear = previous?.cleared ? 0 : stage.reward.firstClear;
+  const score = Math.floor(result.score / 100);
+  const time = result.elapsed <= stage.targetSeconds
+    ? Math.min(160, Math.round((stage.targetSeconds - result.elapsed) * 1.4))
+    : 0;
+  const maxHp = Math.max(1, result.stats?.maxHp ?? 100);
+  const damageRatio = (result.stats?.damageTaken ?? maxHp) / maxHp;
+  const survival = damageRatio <= 0.25 ? 100 : damageRatio <= 0.6 ? 45 : 0;
+  const mechanicActions = result.stats?.mechanicActions ?? 0;
+  const mechanic = Math.min(160, mechanicActions * 28);
+  const parts = stage.reward.parts + Number(result.rank === 'gold') + Number(mechanicActions >= 3);
+  return {
+    credits: stage.reward.credits + firstClear + score + time + survival + mechanic,
+    parts,
+    base: stage.reward.credits,
+    firstClear,
+    score,
+    time,
+    survival,
+    mechanic
+  };
 }
 
 function accumulateRun(current, result, success) {

@@ -4,6 +4,8 @@ import { enemyArchetypes, resolveEnemyArchetype } from '../src/data/enemies.js';
 import { starterLoadout } from '../src/data/equipment.js';
 import { resolveCombatModifiers, resolveIncomingDamage, resolveShotModifiers } from '../src/game/CombatModifiers.js';
 import { createQualityState, resolveQualityConfig, sampleAdaptiveQuality } from '../src/game/AdaptiveQuality.js';
+import { BOSS_PHASES, resolveBossPhase, resolveBossTelegraphOffsets, resolveBossVolleyAngles } from '../src/game/BossStateMachine.js';
+import { ObjectPool } from '../src/game/ObjectPool.js';
 import { stageMechanicRules } from '../src/game/StageMechanicDirector.js';
 import { canFullscreen, enterFullscreen, getFullscreenElement, leaveFullscreen } from '../src/systems/fullscreen.js';
 
@@ -26,13 +28,14 @@ describe('first chapter runtime differentiation', () => {
     expect(resolveEnemyArchetype('drone', 0, true).trait).toBe('boss');
   });
 
-  it('unlocks four mechanically distinct operators during chapter one', () => {
+  it('starts with Miku and keeps every other mechanically distinct operator in recruitment', () => {
     const ids = ['miku', 'nari', 'bibi', 'serin'];
     const operators = ids.map((id) => characterById[id]);
     expect(new Set(operators.map((operator) => operator.weaponType)).size).toBe(4);
     expect(new Set(operators.map((operator) => operator.skill.id)).size).toBe(4);
     expect(operators[0].unlock.type).toBe('starter');
-    for (const operator of operators.slice(1)) expect(operator.unlock.stage.startsWith('1-')).toBe(true);
+    for (const operator of operators.slice(1)) expect(operator.unlock.type).toBe('recruitment');
+    for (const operator of Object.values(characterById).slice(1)) expect(operator.unlock.type).toBe('recruitment');
   });
 
   it('assigns every operator a distinct tactical hook across all required fire families', () => {
@@ -105,6 +108,56 @@ describe('mobile adaptive quality', () => {
     ({ state } = sampleAdaptiveQuality(state, 4, true));
     expect(state.tier).toBe('low');
     expect(resolveQualityConfig(state, 2).renderFps).toBe(30);
+  });
+});
+
+describe('bounded combat object pools', () => {
+  it('reuses released objects and ignores duplicate releases', () => {
+    let creates = 0;
+    let resets = 0;
+    const pool = new ObjectPool({
+      create: () => ({ id: ++creates }),
+      reset: () => { resets += 1; },
+      maxRetained: 2
+    });
+    const first = pool.acquire();
+    expect(pool.release(first)).toBe(true);
+    expect(pool.release(first)).toBe(false);
+    expect(pool.acquire()).toBe(first);
+    expect(creates).toBe(1);
+    expect(resets).toBe(1);
+    expect(pool.stats()).toEqual({ created: 1, active: 1, available: 0 });
+  });
+
+  it('bounds retained effects and disposes overflow', () => {
+    let disposed = 0;
+    const pool = new ObjectPool({ create: () => ({}), dispose: () => { disposed += 1; }, maxRetained: 1 });
+    const first = pool.acquire();
+    const second = pool.acquire();
+    pool.release(first);
+    pool.release(second);
+    expect(pool.stats()).toEqual({ created: 1, active: 0, available: 1 });
+    expect(disposed).toBe(1);
+    pool.dispose();
+    expect(disposed).toBe(2);
+  });
+});
+
+describe('readable three-phase bosses', () => {
+  it('changes phase at two-thirds and one-third health', () => {
+    expect(resolveBossPhase(100, 100).id).toBe(1);
+    expect(resolveBossPhase(66, 100).id).toBe(2);
+    expect(resolveBossPhase(33, 100).id).toBe(3);
+  });
+
+  it('escalates patterns while keeping volleys and warnings bounded', () => {
+    expect(BOSS_PHASES.map((phase) => phase.volley)).toEqual([1, 3, 5]);
+    expect(BOSS_PHASES.map((phase) => phase.telegraphCount)).toEqual([1, 2, 3]);
+    for (const phase of BOSS_PHASES) {
+      expect(resolveBossVolleyAngles(phase)).toHaveLength(phase.volley);
+      expect(resolveBossTelegraphOffsets(phase)).toHaveLength(phase.telegraphCount);
+      expect(phase.telegraphDuration).toBeGreaterThanOrEqual(1);
+    }
   });
 });
 

@@ -4,12 +4,13 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { assetManifest, duplicateAssets } from '../src/data/assets.js';
 import { AXES, characters } from '../src/data/characters.js';
-import { equipment, EQUIPMENT_SLOTS, getEquipmentFit, starterEquipmentIds, starterLoadout } from '../src/data/equipment.js';
+import { equipment, equipmentById, EQUIPMENT_SLOTS, equipmentUpgradeCost, getEquipmentFit, starterEquipmentIds, starterLoadout } from '../src/data/equipment.js';
 import { stages } from '../src/data/stages.js';
 import { auditOrthogonality } from '../src/systems/orthogonality.js';
 import { auditSimulatedBalance } from '../src/systems/balanceSimulator.js';
 import { auditEquipmentOrthogonality } from '../src/systems/equipmentOrthogonality.js';
-import { applyStageResult, createDefaultSave, exportSave, importSave, migrateSave } from '../src/systems/storage.js';
+import { CHARACTER_RECRUIT_COST, drawEquipment, EQUIPMENT_DRAW_COST, recruitCharacter } from '../src/systems/recruitment.js';
+import { applyStageResult, calculateStageRewards, createDefaultSave, exportSave, importSave, migrateSave } from '../src/systems/storage.js';
 
 describe('campaign content', () => {
   it('defines 50 distinct stages across five chapters', () => {
@@ -73,6 +74,13 @@ describe('orthogonality contract', () => {
     for (const share of Object.values(result.winnerShare)) expect(share).toBeLessThanOrEqual(0.3);
   });
 
+  it('keeps all level identities unique and recommendations evenly distributed', () => {
+    expect(new Set(stages.map((stage) => `${stage.primaryMechanic}/${stage.secondaryMechanic}`)).size).toBe(50);
+    const audit = auditOrthogonality();
+    expect(audit.usageRange).toEqual({ min: 9, max: 13 });
+    for (const count of Object.values(audit.usage)) expect(count).toBeGreaterThanOrEqual(9);
+  });
+
   it('keeps equipment as bounded tradeoffs in all four slots', () => {
     expect(new Set(equipment.map((item) => item.slot))).toEqual(new Set(EQUIPMENT_SLOTS));
     for (const slot of EQUIPMENT_SLOTS) expect(equipment.filter((item) => item.slot === slot).length).toBeGreaterThanOrEqual(8);
@@ -109,6 +117,8 @@ describe('asset preservation', () => {
     expect(assetManifest).toHaveLength(13);
     for (const asset of assetManifest) {
       expect(asset.fileName).toMatch(/^[a-z0-9-]+\.glb$/);
+      expect(asset.licenseStatus).toBe('user-attested');
+      expect(asset.licenseEvidence).toContain('User attestation');
       expect(asset.rigProfile).toBe('static-mesh-unrigged');
       expect(asset.requiresRigging).toBe(true);
       const path = resolve('assets-source/characters', asset.fileName);
@@ -148,8 +158,8 @@ describe('save progression', () => {
     const result = { success: true, score: 5000, elapsed: 90, rank: 'silver', characterId: 'miku', loadout: starterLoadout, stats: { damageTaken: 22, breaks: 3 } };
     const first = applyStageResult(createDefaultSave(), stage, result);
     const repeat = applyStageResult(first, stage, result);
-    expect(first.credits).toBe(stage.reward.credits + stage.reward.firstClear + 50);
-    expect(repeat.credits - first.credits).toBe(stage.reward.credits + 50);
+    expect(first.credits).toBe(calculateStageRewards(stage, result).credits);
+    expect(repeat.credits - first.credits).toBe(calculateStageRewards(stage, result, first.stages[stage.id]).credits);
     expect(repeat.telemetry.characterRuns.miku.runs).toBe(2);
     expect(repeat.telemetry.characterRuns.miku.totalBreaks).toBe(6);
     expect(repeat.telemetry.equipmentRuns['pulse-carbine'].runs).toBe(2);
@@ -166,5 +176,50 @@ describe('save progression', () => {
     expect(failed.stages[stage.id].cleared).toBe(false);
     expect(failed.telemetry.stageRuns[stage.id].runs).toBe(1);
     expect(failed.telemetry.stageRuns[stage.id].clears).toBe(0);
+  });
+
+  it('rewards time, survival, mechanic mastery and spends parts on enhancement', () => {
+    const stage = stages[9];
+    const result = { success: true, score: 9000, elapsed: 80, rank: 'gold', stats: { maxHp: 100, damageTaken: 20, mechanicActions: 4 } };
+    const rewards = calculateStageRewards(stage, result);
+    expect(rewards.time).toBeGreaterThan(0);
+    expect(rewards.survival).toBe(100);
+    expect(rewards.mechanic).toBe(112);
+    expect(rewards.parts).toBe(stage.reward.parts + 2);
+    expect(equipmentUpgradeCost(equipmentById['pulse-carbine'], 0)).toEqual({ credits: 120, parts: 1 });
+    expect(equipmentUpgradeCost(equipmentById['pulse-carbine'], 4).parts).toBe(3);
+  });
+});
+
+describe('duplicate-free local recruitment', () => {
+  it('starts with Miku only and recruits unique characters for a high fixed price', () => {
+    const initial = { ...createDefaultSave(), credits: 10000 };
+    expect(initial.unlockedCharacters).toEqual(['miku']);
+    const first = recruitCharacter(initial, () => 0);
+    const second = recruitCharacter(first.save, () => 0);
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(first.character.id).not.toBe(second.character.id);
+    expect(new Set(second.save.unlockedCharacters).size).toBe(3);
+    expect(second.save.credits).toBe(10000 - CHARACTER_RECRUIT_COST * 2);
+  });
+
+  it('draws previously unowned equipment without duplicates inside the chosen slot', () => {
+    const initial = { ...createDefaultSave(), credits: 5000 };
+    const first = drawEquipment(initial, 'weapon', () => 0);
+    const second = drawEquipment(first.save, 'weapon', () => 0);
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(first.item.id).not.toBe(second.item.id);
+    expect(first.item.slot).toBe('weapon');
+    expect(second.save.credits).toBe(5000 - EQUIPMENT_DRAW_COST * 2);
+    expect(second.save.ownedEquipment[first.item.id]).toBeTruthy();
+    expect(second.save.ownedEquipment[second.item.id]).toBeTruthy();
+  });
+
+  it('does not mutate progression when recruitment currency is insufficient', () => {
+    const save = createDefaultSave();
+    expect(recruitCharacter(save, () => 0)).toMatchObject({ ok: false, reason: 'credits', save });
+    expect(drawEquipment(save, 'armor', () => 0)).toMatchObject({ ok: false, reason: 'credits', save });
   });
 });

@@ -15,7 +15,7 @@ export const characters = [
   {
     id: 'nari', name: '나리', codename: 'Wayfinder', role: 'support', weaponType: 'beaconPistol',
     combatProfile: { fireModel: 'hitscan', tacticalHook: 'objectiveAssist' },
-    asset: runtimeAsset('navi-kemonomimi.glb'), unlock: { type: 'stage', stage: '1-4' },
+    asset: runtimeAsset('navi-kemonomimi.glb'), unlock: { type: 'recruitment' },
     stats: { hp: 92, speed: 6.4, damage: 9, fireRate: 5.5, range: 19, break: 6 },
     axes: { damage: 2, break: 2, control: 3, mobility: 4, survival: 2, support: 5, range: 3, mechanic: 5 },
     strengths: ['은폐 적 탐지', '목표물 가속'], weakness: '단독 교전 화력이 낮다.',
@@ -25,7 +25,7 @@ export const characters = [
   {
     id: 'bibi', name: '비비', codename: 'Pocket Nova', role: 'demolition', weaponType: 'microGrenade',
     combatProfile: { fireModel: 'projectile', tacticalHook: 'gravityExplosion' },
-    asset: runtimeAsset('tiny-adventurer.glb'), unlock: { type: 'stageScore', stage: '1-8', score: 6500 },
+    asset: runtimeAsset('tiny-adventurer.glb'), unlock: { type: 'recruitment' },
     stats: { hp: 82, speed: 6.8, damage: 18, fireRate: 2.2, range: 14, break: 10 },
     axes: { damage: 4, break: 5, control: 4, mobility: 4, survival: 1, support: 1, range: 2, mechanic: 4 },
     strengths: ['군집 폭파', '파괴물 처리'], weakness: '체력이 낮고 원거리 표적에 약하다.',
@@ -35,7 +35,7 @@ export const characters = [
   {
     id: 'serin', name: '세린', codename: 'Triage', role: 'medic', weaponType: 'burstSMG',
     combatProfile: { fireModel: 'hitscanBurst', tacticalHook: 'cleanseHeal' },
-    asset: runtimeAsset('nurse-twintail.glb'), unlock: { type: 'stage', stage: '1-10' },
+    asset: runtimeAsset('nurse-twintail.glb'), unlock: { type: 'recruitment' },
     stats: { hp: 108, speed: 5.9, damage: 8, fireRate: 9, range: 15, break: 4 },
     axes: { damage: 2, break: 1, control: 2, mobility: 3, survival: 5, support: 5, range: 2, mechanic: 4 },
     strengths: ['지속 회복', '상태이상 정화'], weakness: '브레이크와 장거리 대응력이 낮다.',
@@ -45,7 +45,7 @@ export const characters = [
   {
     id: 'noir', name: '느와르', codename: 'Black Wing', role: 'aerial', weaponType: 'railLance',
     combatProfile: { fireModel: 'chargedHitscan', tacticalHook: 'aerialCharge' },
-    asset: runtimeAsset('fallen-angel.glb'), unlock: { type: 'challenge', stage: '2-8', challenge: 'noGroundHit' },
+    asset: runtimeAsset('fallen-angel.glb'), unlock: { type: 'recruitment' },
     stats: { hp: 88, speed: 7.1, damage: 21, fireRate: 1.5, range: 28, break: 5 },
     axes: { damage: 5, break: 2, control: 2, mobility: 5, survival: 1, support: 1, range: 5, mechanic: 4 },
     strengths: ['공중 간극 횡단', '장거리 약점 저격'], weakness: '근거리 포위와 지속 피해에 취약하다.',
@@ -55,7 +55,7 @@ export const characters = [
   {
     id: 'mora', name: '모라', codename: 'Marionette', role: 'controller', weaponType: 'threadCaster',
     combatProfile: { fireModel: 'tetherBeam', tacticalHook: 'networkLock' },
-    asset: runtimeAsset('gothic-doll.glb'), unlock: { type: 'stage', stage: '3-2' },
+    asset: runtimeAsset('gothic-doll.glb'), unlock: { type: 'recruitment' },
     stats: { hp: 94, speed: 5.6, damage: 10, fireRate: 4, range: 18, break: 6 },
     axes: { damage: 2, break: 3, control: 5, mobility: 2, survival: 3, support: 4, range: 3, mechanic: 5 },
     strengths: ['적 강화망 절단', '속박'], weakness: '빠르게 이동하는 단일 적을 마무리하기 어렵다.',
@@ -65,7 +65,7 @@ export const characters = [
   {
     id: 'roa', name: '로아', codename: 'Surveyor', role: 'sniper', weaponType: 'surveyRifle',
     combatProfile: { fireModel: 'precisionHitscan', tacticalHook: 'weakpointSequence' },
-    asset: runtimeAsset('beret-scout.glb'), unlock: { type: 'stageScore', stage: '3-6', score: 7200 },
+    asset: runtimeAsset('beret-scout.glb'), unlock: { type: 'recruitment' },
     stats: { hp: 90, speed: 5.8, damage: 25, fireRate: 1.2, range: 32, break: 8 },
     axes: { damage: 5, break: 3, control: 2, mobility: 2, survival: 2, support: 3, range: 5, mechanic: 4 },
     strengths: ['순차 약점', '원거리 정밀 사격'], weakness: '탄막 속 재배치와 군집 대응이 느리다.',
@@ -75,7 +75,7 @@ export const characters = [
   {
     id: 'marin', name: '마린', codename: 'Riptide', role: 'skirmisher', weaponType: 'waterShotgun',
     combatProfile: { fireModel: 'shotgun', tacticalHook: 'projectileClear' },
-    asset: runtimeAsset('swimsuit-runner.glb'), unlock: { type: 'stage', stage: '3-10' },
+    asset: runtimeAsset('swimsuit-runner.glb'), unlock: { type: 'recruitment' },
     stats: { hp: 102, speed: 6.9, damage: 8, fireRate: 2.7, range: 10, break: 12 },
     axes: { damage: 3, break: 5, control: 3, mobility: 5, survival: 3, support: 1, range: 1, mechanic: 4 },
     strengths: ['수면·빙판 이동', '근접 브레이크'], weakness: '원거리와 비행 적에 거의 대응하지 못한다.',
@@ -85,7 +85,7 @@ export const characters = [
   {
     id: 'jigsaw', name: '지소', codename: 'Patchwork', role: 'engineer', weaponType: 'modularCarbine',
     combatProfile: { fireModel: 'droneCarbine', tacticalHook: 'deviceRewire' },
-    asset: runtimeAsset('puzzle-tech.glb'), unlock: { type: 'challenge', stage: '4-4', challenge: 'allNodes' },
+    asset: runtimeAsset('puzzle-tech.glb'), unlock: { type: 'recruitment' },
     stats: { hp: 98, speed: 5.8, damage: 11, fireRate: 6.5, range: 20, break: 6 },
     axes: { damage: 3, break: 3, control: 4, mobility: 2, survival: 3, support: 4, range: 3, mechanic: 5 },
     strengths: ['장치 재배선', '터렛 전환'], weakness: '즉흥 교전에서 준비 시간이 길다.',
@@ -95,7 +95,7 @@ export const characters = [
   {
     id: 'yura', name: '유라', codename: 'Foxfire', role: 'assassin', weaponType: 'seekerKunai',
     combatProfile: { fireModel: 'seeker', tacticalHook: 'rearAmbush' },
-    asset: runtimeAsset('fox-spark.glb'), unlock: { type: 'stage', stage: '4-8' },
+    asset: runtimeAsset('fox-spark.glb'), unlock: { type: 'recruitment' },
     stats: { hp: 84, speed: 7.5, damage: 16, fireRate: 4.2, range: 16, break: 4 },
     axes: { damage: 5, break: 1, control: 3, mobility: 5, survival: 2, support: 1, range: 2, mechanic: 5 },
     strengths: ['후방 핵 파괴', '유도탄 교란'], weakness: '정면 중장갑과 좁은 방어전에서 약하다.',
@@ -105,7 +105,7 @@ export const characters = [
   {
     id: 'lumi', name: '루미', codename: 'Dreamfield', role: 'zoneKeeper', weaponType: 'sleepMortar',
     combatProfile: { fireModel: 'fieldProjectile', tacticalHook: 'slowField' },
-    asset: runtimeAsset('pajama-dreamer.glb'), unlock: { type: 'stageScore', stage: '5-2', score: 7800 },
+    asset: runtimeAsset('pajama-dreamer.glb'), unlock: { type: 'recruitment' },
     stats: { hp: 112, speed: 5.2, damage: 13, fireRate: 1.8, range: 22, break: 7 },
     axes: { damage: 3, break: 3, control: 5, mobility: 1, survival: 4, support: 3, range: 4, mechanic: 4 },
     strengths: ['지역 방어', '탄막 감속'], weakness: '추격전과 빠른 위치 전환에 약하다.',
@@ -115,7 +115,7 @@ export const characters = [
   {
     id: 'sora', name: '소라', codename: 'Undertow', role: 'tank', weaponType: 'anchorCannon',
     combatProfile: { fireModel: 'heavyCannon', tacticalHook: 'anchorGuard' },
-    asset: runtimeAsset('school-swimmer.glb'), unlock: { type: 'challenge', stage: '5-6', challenge: 'escortPerfect' },
+    asset: runtimeAsset('school-swimmer.glb'), unlock: { type: 'recruitment' },
     stats: { hp: 145, speed: 4.8, damage: 14, fireRate: 2.4, range: 17, break: 11 },
     axes: { damage: 3, break: 5, control: 4, mobility: 1, survival: 5, support: 3, range: 2, mechanic: 4 },
     strengths: ['넉백 저항', '호위 방벽'], weakness: '기동 목표와 시간 제한에서 불리하다.',
@@ -125,7 +125,7 @@ export const characters = [
   {
     id: 'neko', name: '네코', codename: 'Afterimage', role: 'runner', weaponType: 'twinSMG',
     combatProfile: { fireModel: 'rapidHitscan', tacticalHook: 'movingCombo' },
-    asset: runtimeAsset('cat-street.glb'), unlock: { type: 'stage', stage: '5-9' },
+    asset: runtimeAsset('cat-street.glb'), unlock: { type: 'recruitment' },
     stats: { hp: 88, speed: 8.0, damage: 7, fireRate: 12, range: 13, break: 3 },
     axes: { damage: 3, break: 1, control: 2, mobility: 5, survival: 2, support: 2, range: 1, mechanic: 5 },
     strengths: ['추격·탈출', '콤보 스위치'], weakness: '중장갑, 장거리, 정지 방어 목표에 약하다.',

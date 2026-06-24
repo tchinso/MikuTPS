@@ -38,6 +38,9 @@ jobs:
       - name: Verify content and balance contracts
         run: pnpm test
 
+      - name: Verify release rights registry
+        run: pnpm audit:release
+
       - name: Build static site
         run: pnpm build
 

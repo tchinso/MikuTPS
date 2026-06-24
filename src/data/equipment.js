@@ -84,6 +84,13 @@ export const equipment = [
 
 export const equipmentById = Object.fromEntries(equipment.map((item) => [item.id, item]));
 
+export function equipmentUpgradeCost(item, level) {
+  return {
+    credits: Math.round(item.enhancement.baseCost * item.enhancement.growth ** level),
+    parts: 1 + Math.floor(level / 2)
+  };
+}
+
 export function getEquipmentFit(item, characterId) {
   const tier = item.affinity.strong.includes(characterId) ? 'strong' : item.affinity.weak.includes(characterId) ? 'weak' : 'neutral';
   const reason = tier === 'strong' ? item.affinity.strongReason : tier === 'weak' ? item.affinity.weakReason : '핵심 패시브를 증폭하지도, 방해하지도 않는다.';

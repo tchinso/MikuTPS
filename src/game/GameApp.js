@@ -1,11 +1,12 @@
 import { characters, characterById } from '../data/characters.js';
 import { chapters, stages, stageById } from '../data/stages.js';
-import { equipment, equipmentById, EQUIPMENT_SLOTS, getEquipmentFit } from '../data/equipment.js';
+import { equipment, equipmentById, EQUIPMENT_SLOTS, equipmentUpgradeCost, getEquipmentFit } from '../data/equipment.js';
 import { auditOrthogonality } from '../systems/orthogonality.js';
 import { auditSimulatedBalance } from '../systems/balanceSimulator.js';
 import { auditEquipmentOrthogonality } from '../systems/equipmentOrthogonality.js';
 import { canFullscreen, enterFullscreen, getFullscreenElement, leaveFullscreen } from '../systems/fullscreen.js';
-import { applyStageResult, createDefaultSave, exportSave, importSave, loadSave, persistSave, SAVE_KEY } from '../systems/storage.js';
+import { CHARACTER_RECRUIT_COST, drawEquipment, EQUIPMENT_DRAW_COST, recruitCharacter } from '../systems/recruitment.js';
+import { applyStageResult, calculateStageRewards, createDefaultSave, exportSave, importSave, loadSave, persistSave, SAVE_KEY } from '../systems/storage.js';
 
 const slotNames = { weapon: '무기', armor: '보호구', shoes: '신발', accessory: '장신구' };
 const rankNames = { bronze: 'B', silver: 'A', gold: 'S', failed: '실패' };
@@ -18,6 +19,7 @@ export class GameApp {
     this.selectedChapter = 1;
     this.equipmentFilter = 'all';
     this.equipmentSort = 'fit';
+    this.lastRecruitment = null;
     this.audit = auditOrthogonality();
     this.balanceAudit = auditSimulatedBalance();
     this.equipmentAudit = auditEquipmentOrthogonality();
@@ -53,6 +55,7 @@ export class GameApp {
           <button data-nav="home"><span>⌂</span>허브</button>
           <button data-nav="stages"><span>⌖</span>작전</button>
           <button data-nav="roster"><span>♙</span>로스터</button>
+          <button data-nav="recruit"><span>✦</span>영입</button>
           <button data-nav="workshop"><span>◇</span>공방</button>
           <button data-nav="settings"><span>⚙</span>설정</button>
         </nav>
@@ -77,6 +80,7 @@ export class GameApp {
     if (screen === 'home') target.innerHTML = this.homeTemplate();
     if (screen === 'stages') target.innerHTML = this.stagesTemplate();
     if (screen === 'roster') target.innerHTML = this.rosterTemplate();
+    if (screen === 'recruit') target.innerHTML = this.recruitmentTemplate();
     if (screen === 'workshop') target.innerHTML = this.workshopTemplate();
     if (screen === 'settings') target.innerHTML = this.settingsTemplate();
     if (screen === 'combat') this.startCombat(options.stageId);
@@ -184,11 +188,25 @@ export class GameApp {
   }
 
   unlockText(character) {
-    const unlock = character.unlock;
-    if (unlock.type === 'stage') return `${unlock.stage} 클리어`;
-    if (unlock.type === 'stageScore') return `${unlock.stage} ${unlock.score.toLocaleString()}점`;
-    if (unlock.type === 'challenge') return `${unlock.stage} 특수 도전`;
-    return '기본 캐릭터';
+    return character.id === 'miku' ? '기본 캐릭터' : '리크루트에서 중복 없이 영입';
+  }
+
+  recruitmentTemplate() {
+    const remainingCharacters = characters.filter((character) => character.id !== 'miku' && !this.save.unlockedCharacters.includes(character.id));
+    const recent = (this.save.recruitmentHistory ?? []).slice(-5).reverse();
+    const reveal = this.lastRecruitment
+      ? `<div class="recruit-reveal"><small>${this.lastRecruitment.kind === 'character' ? 'NEW OPERATOR' : `NEW ${slotNames[this.lastRecruitment.slot].toUpperCase()}`}</small><strong>${this.lastRecruitment.name}</strong><span>${this.lastRecruitment.detail}</span></div>`
+      : '';
+    return `
+      <section class="content-page recruitment-page">
+        <div class="page-heading"><div><p class="eyebrow">NO DUPLICATES · LOCAL RECRUITMENT</p><h1>공명 리크루트</h1><p>유료 재화나 서버 없이 저장된 크레딧만 사용합니다. 이미 보유한 캐릭터와 장비는 다시 나오지 않습니다.</p></div><div class="campaign-count"><b>${this.save.unlockedCharacters.length}</b><span>/ 13 영입</span></div></div>
+        ${reveal}
+        <div class="recruit-grid">
+          <article class="operator-draw"><div class="draw-heading"><span>OPERATOR SIGNAL</span><h2>오퍼레이터 영입</h2><p>미보유 오퍼레이터 한 명을 균등 확률로 영입합니다.</p></div><div class="draw-pool"><b>${remainingCharacters.length}</b><span>남은 신호</span></div><div class="pool-tags">${remainingCharacters.length ? remainingCharacters.map((character) => `<span>${character.codename}</span>`).join('') : '<span>전원 영입 완료</span>'}</div><button class="primary-action" data-recruit-character ${remainingCharacters.length ? '' : 'disabled'}><span>${remainingCharacters.length ? '랜덤 영입' : 'COMPLETE'}</span><small>${remainingCharacters.length ? `${CHARACTER_RECRUIT_COST.toLocaleString()} C` : '중복 없음'}</small></button></article>
+          <article class="equipment-draw"><div class="draw-heading"><span>EQUIPMENT SUPPLY</span><h2>장비 랜덤 조달</h2><p>원하는 슬롯을 고르고, 그 슬롯의 미보유 장비 하나를 중복 없이 얻습니다.</p></div><div class="slot-draws">${EQUIPMENT_SLOTS.map((slot) => { const remaining = equipment.filter((item) => item.slot === slot && !this.save.ownedEquipment[item.id]).length; return `<button data-draw-equipment="${slot}" ${remaining ? '' : 'disabled'}><span>${slotNames[slot]}</span><b>${remaining ? `${EQUIPMENT_DRAW_COST.toLocaleString()} C` : 'COMPLETE'}</b><small>${remaining}개 남음</small></button>`; }).join('')}</div></article>
+        </div>
+        <section class="recruit-history"><div class="section-heading"><div><span>LOCAL RECORD</span><h2>최근 영입</h2></div></div>${recent.length ? recent.map((entry) => { const name = entry.kind === 'character' ? characterById[entry.id]?.name : equipmentById[entry.id]?.name; return `<span><b>${entry.kind === 'character' ? 'OPERATOR' : slotNames[entry.slot]}</b>${name ?? entry.id}<em>-${entry.cost.toLocaleString()} C</em></span>`; }).join('') : '<p>아직 영입 기록이 없습니다.</p>'}</section>
+      </section>`;
   }
 
   workshopTemplate() {
@@ -222,7 +240,7 @@ export class GameApp {
     const owned = this.save.ownedEquipment[item.id];
     const equipped = this.save.loadout[item.slot] === item.id;
     const level = owned?.level ?? 0;
-    const cost = Math.round(item.enhancement.baseCost * item.enhancement.growth ** level);
+    const upgradeCost = equipmentUpgradeCost(item, level);
     const fit = getEquipmentFit(item, this.save.selectedCharacter);
     const strongNames = item.affinity.strong.map((id) => characterById[id].name).join(' · ');
     const weakNames = item.affinity.weak.map((id) => characterById[id].name).join(' · ');
@@ -232,7 +250,7 @@ export class GameApp {
       <div class="fit-callout"><strong>${fit.label} · 효과 ×${fit.effectScale} / 대가 ×${fit.drawbackScale}</strong><span>${fit.reason}</span></div>
       <dl><dt>효과</dt><dd>${Object.entries(item.effect).map(([key, value]) => `${key} ${typeof value === 'number' && Math.abs(value) < 1 ? `${value >= 0 ? '+' : ''}${Math.round(value * 100)}%` : value}`).join(' · ')}</dd><dt>대가</dt><dd>${Object.entries(item.drawback).map(([key, value]) => `${key} ${Math.round(value * 100)}%`).join(' · ')}</dd></dl>
       <div class="affinity-map"><b>◎ ${strongNames}</b><em>× ${weakNames}</em></div>
-      <div class="equipment-actions">${owned ? `<button data-equip="${item.id}" ${equipped ? 'disabled' : ''}>${equipped ? '장착 중' : '장착'}</button><button data-upgrade="${item.id}" ${level >= item.enhancement.max ? 'disabled' : ''}>${level >= item.enhancement.max ? 'MAX' : `강화 ${cost} C`}</button><button data-lock-equipment="${item.id}" aria-label="${item.name} ${owned.locked ? '잠금 해제' : '잠금'}">${owned.locked ? '◆' : '◇'}</button>` : `<button data-buy="${item.id}">설계 구매 ${cost} C</button>`}</div>
+      <div class="equipment-actions">${owned ? `<button data-equip="${item.id}" ${equipped ? 'disabled' : ''}>${equipped ? '장착 중' : '장착'}</button><button data-upgrade="${item.id}" ${level >= item.enhancement.max ? 'disabled' : ''}>${level >= item.enhancement.max ? 'MAX' : `강화 ${upgradeCost.credits} C · ${upgradeCost.parts} P`}</button><button data-lock-equipment="${item.id}" aria-label="${item.name} ${owned.locked ? '잠금 해제' : '잠금'}">${owned.locked ? '◆' : '◇'}</button>` : `<button data-nav="recruit">랜덤 조달 풀에서 획득</button>`}</div>
     </article>`;
   }
 
@@ -265,6 +283,7 @@ export class GameApp {
           <div class="hud-center"><span>SCORE</span><b data-hud-score>000000</b><em data-hud-combo></em></div>
           <div class="hud-right"><span title="남은 적"><i class="enemy-dot"></i><b data-hud-enemies>0</b></span><span class="wave-readout">W <b data-hud-wave>1/${stage.waves}</b></span><b data-hud-time>00:00</b></div>
         </div>
+        <div class="boss-status" data-hud-boss hidden><span data-hud-boss-phase></span><div><i data-hud-boss-hp></i></div><b data-hud-boss-state></b></div>
         <div class="hp-cluster"><span>${character.name}</span><div><i data-hud-hp></i></div><b data-hud-hp-text></b></div>
         <div class="mission-callout"><small>TACTICAL NOTE</small><span>${stage.tactics[0].label}</span><b><i data-hud-objective-label>${stage.primaryMechanic}</i><em data-hud-objective>ACTIVE</em></b></div>
         <div class="touch-pad move-pad" data-pad="move"><i></i><b data-knob="move"></b><span>MOVE</span></div>
@@ -304,16 +323,30 @@ export class GameApp {
     set('[data-dodge-cooldown]', hud.dodgeCooldown > 0 ? hud.dodgeCooldown.toFixed(1) : 'READY');
     const hp = this.root.querySelector('[data-hud-hp]');
     if (hp) hp.style.width = `${Math.max(0, (hud.hp / hud.maxHp) * 100)}%`;
+    const boss = this.root.querySelector('[data-hud-boss]');
+    if (boss) {
+      boss.hidden = !hud.boss;
+      if (hud.boss) {
+        boss.style.setProperty('--boss-color', hud.boss.color);
+        set('[data-hud-boss-phase]', `PHASE ${hud.boss.phase} · ${hud.boss.label}`);
+        set('[data-hud-boss-state]', hud.boss.state);
+        const bossHp = this.root.querySelector('[data-hud-boss-hp]');
+        if (bossHp) bossHp.style.width = `${Math.max(0, (hud.boss.hp / hud.boss.maxHp) * 100)}%`;
+      }
+    }
   }
 
   showResult(stage, result) {
     result.loadout = { ...this.save.loadout };
+    const rewards = calculateStageRewards(stage, result, this.save.stages[stage.id]);
     this.save = applyStageResult(this.save, stage, result);
-    if (result.success) this.save = this.refreshUnlocks(this.save);
     const finale = result.success && stage.id === '5-10';
     const overlay = document.createElement('div');
     overlay.className = 'result-overlay';
-    overlay.innerHTML = `<div class="result-card ${result.success ? '' : 'failed'}"><p class="eyebrow">${finale ? 'RESONANCE PROTOCOL COMPLETE' : result.success ? 'OPERATION COMPLETE' : 'SIGNAL LOST'}</p><div class="result-rank rank-${result.rank}">${rankNames[result.rank]}</div><h2>${finale ? '우리의 서로 다른 박자 · END' : `${stage.id} ${stage.title}`}</h2><b class="result-score">${result.score.toLocaleString()}</b><div class="result-stats"><span><small>TIME</small>${this.formatTime(result.elapsed)}</span><span><small>ACCURACY</small>${Math.round(result.stats.accuracy * 100)}%</span><span><small>BREAK</small>${result.stats.breaks}</span><span><small>DAMAGE</small>${Math.round(result.stats.damageTaken)}</span></div><div class="result-actions"><button data-result-action="${finale ? 'home' : 'stages'}">${finale ? '엔딩 허브' : '작전 지도'}</button><button class="primary-action" data-result-action="retry">다시 출격</button></div></div>`;
+    const rewardDetails = result.success
+      ? [['기본', rewards.base], ['최초', rewards.firstClear], ['성적', rewards.score], ['시간', rewards.time], ['저피격', rewards.survival], ['기믹', rewards.mechanic]].filter(([, value]) => value > 0).map(([label, value]) => `${label} +${value}`).join(' · ')
+      : '실패 학습 보상';
+    overlay.innerHTML = `<div class="result-card ${result.success ? '' : 'failed'}"><p class="eyebrow">${finale ? 'RESONANCE PROTOCOL COMPLETE' : result.success ? 'OPERATION COMPLETE' : 'SIGNAL LOST'}</p><div class="result-rank rank-${result.rank}">${rankNames[result.rank]}</div><h2>${finale ? '우리의 서로 다른 박자 · END' : `${stage.id} ${stage.title}`}</h2><b class="result-score">${result.score.toLocaleString()}</b><div class="result-stats"><span><small>TIME</small>${this.formatTime(result.elapsed)}</span><span><small>ACCURACY</small>${Math.round(result.stats.accuracy * 100)}%</span><span><small>BREAK</small>${result.stats.breaks}</span><span><small>DAMAGE</small>${Math.round(result.stats.damageTaken)}</span></div><div class="result-rewards"><b>+${rewards.credits.toLocaleString()} C · +${rewards.parts} P</b><span>${rewardDetails}</span></div><div class="result-actions"><button data-result-action="${finale ? 'home' : 'stages'}">${finale ? '엔딩 허브' : '작전 지도'}</button><button class="primary-action" data-result-action="retry">다시 출격</button></div></div>`;
     overlay.dataset.stageId = stage.id;
     this.root.querySelector('#combat-root').append(overlay);
     this.updateResources();
@@ -332,6 +365,9 @@ export class GameApp {
       this.requestCombatFullscreen();
       return this.showScreen('combat', { stageId });
     }
+    if (event.target.closest('[data-recruit-character]')) return this.performCharacterRecruit();
+    const drawSlot = event.target.closest('[data-draw-equipment]')?.dataset.drawEquipment;
+    if (drawSlot) return this.performEquipmentDraw(drawSlot);
     const characterId = event.target.closest('[data-character-select]')?.dataset.characterSelect;
     if (characterId) {
       this.save = persistSave({ ...this.save, selectedCharacter: characterId });
@@ -339,8 +375,6 @@ export class GameApp {
       this.toast(`${characterById[characterId].name} 선택 · 최적 ${fit.strong} / 역상성 ${fit.weak}`);
       return this.showScreen('roster');
     }
-    const buyId = event.target.closest('[data-buy]')?.dataset.buy;
-    if (buyId) return this.buyEquipment(buyId);
     const equipId = event.target.closest('[data-equip]')?.dataset.equip;
     if (equipId) return this.equipItem(equipId);
     const upgradeId = event.target.closest('[data-upgrade]')?.dataset.upgrade;
@@ -400,13 +434,23 @@ export class GameApp {
     if (event.target.type === 'range') this.showScreen('settings');
   }
 
-  buyEquipment(id) {
-    const item = equipmentById[id];
-    const cost = item.enhancement.baseCost;
-    if (this.save.credits < cost) return this.toast('크레딧이 부족합니다. 작전을 먼저 완료하세요.');
-    this.save = persistSave({ ...this.save, credits: this.save.credits - cost, ownedEquipment: { ...this.save.ownedEquipment, [id]: { level: 0, locked: false } } });
-    this.toast(`${item.name} 설계를 완성했습니다.`);
-    this.showScreen('workshop');
+  performCharacterRecruit() {
+    const result = recruitCharacter(this.save);
+    if (!result.ok) return this.toast(result.reason === 'empty' ? '모든 오퍼레이터를 이미 영입했습니다.' : `${CHARACTER_RECRUIT_COST.toLocaleString()} 크레딧이 필요합니다.`);
+    this.save = persistSave(result.save);
+    this.lastRecruitment = { kind: 'character', name: result.character.name, detail: `${result.character.role} · ${result.character.strengths.join(' / ')}` };
+    this.showScreen('recruit');
+    this.toast(`${result.character.name} 영입 완료 · 중복 없음`);
+  }
+
+  performEquipmentDraw(slot) {
+    const result = drawEquipment(this.save, slot);
+    if (!result.ok) return this.toast(result.reason === 'empty' ? `${slotNames[slot]} 조달 풀을 모두 획득했습니다.` : `${EQUIPMENT_DRAW_COST.toLocaleString()} 크레딧이 필요합니다.`);
+    this.save = persistSave(result.save);
+    const fit = getEquipmentFit(result.item, this.save.selectedCharacter);
+    this.lastRecruitment = { kind: 'equipment', slot, name: result.item.name, detail: `${characterById[this.save.selectedCharacter].name} 기준 ${fit.label}` };
+    this.showScreen('recruit');
+    this.toast(`${result.item.name} 조달 완료 · 중복 없음`);
   }
 
   equipItem(id) {
@@ -420,22 +464,17 @@ export class GameApp {
     const item = equipmentById[id];
     const owned = this.save.ownedEquipment[id];
     if (!owned || owned.level >= item.enhancement.max) return;
-    const cost = Math.round(item.enhancement.baseCost * item.enhancement.growth ** owned.level);
-    if (this.save.credits < cost) return this.toast('크레딧이 부족합니다.');
-    this.save = persistSave({ ...this.save, credits: this.save.credits - cost, ownedEquipment: { ...this.save.ownedEquipment, [id]: { ...owned, level: owned.level + 1 } } });
+    const cost = equipmentUpgradeCost(item, owned.level);
+    if (this.save.credits < cost.credits) return this.toast('강화 크레딧이 부족합니다.');
+    if (this.save.parts < cost.parts) return this.toast(`강화 부품이 ${cost.parts - this.save.parts}개 부족합니다.`);
+    this.save = persistSave({ ...this.save, credits: this.save.credits - cost.credits, parts: this.save.parts - cost.parts, ownedEquipment: { ...this.save.ownedEquipment, [id]: { ...owned, level: owned.level + 1 } } });
     this.toast(`${item.name} ${owned.level + 1}단계 강화`);
     this.showScreen('workshop');
   }
 
   refreshUnlocks(save) {
     const unlocked = new Set(save.unlockedCharacters ?? ['miku']);
-    for (const character of characters) {
-      const rule = character.unlock;
-      if (rule.type === 'starter') unlocked.add(character.id);
-      if (rule.type === 'stage' && save.stages[rule.stage]?.cleared) unlocked.add(character.id);
-      if (rule.type === 'stageScore' && (save.stages[rule.stage]?.bestScore ?? 0) >= rule.score) unlocked.add(character.id);
-      if (rule.type === 'challenge' && save.stages[rule.stage]?.rank === 'gold') unlocked.add(character.id);
-    }
+    unlocked.add('miku');
     const next = { ...save, unlockedCharacters: [...unlocked] };
     return JSON.stringify(next.unlockedCharacters) === JSON.stringify(save.unlockedCharacters) ? save : persistSave(next);
   }

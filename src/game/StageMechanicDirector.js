@@ -268,6 +268,7 @@ export class StageMechanicDirector {
     node.userData.ring.material.color.set('#ffffff');
     node.userData.beam.material.opacity = 0.38;
     this.progress += 1;
+    this.world.stats.mechanicActions += 1;
     this.world.score += 420;
     this.damageBuffUntil = this.world.elapsed + 5;
     this.world.pulse(node.position, node.userData.color, 2.1);
@@ -400,7 +401,10 @@ export class StageMechanicDirector {
   }
 
   onEnemyKilled(enemy) {
-    if (this.behaviors.has('limitedAmmo')) this.ammo = Math.min(this.rule.ammo ?? 22, this.ammo + 4);
+    if (this.behaviors.has('limitedAmmo')) {
+      this.ammo = Math.min(this.rule.ammo ?? 22, this.ammo + 4);
+      this.world.stats.mechanicActions += 1;
+    }
     if (this.rule.type === 'chainBreak' || this.behaviors.has('chain')) {
       this.world.pulse(enemy.group.position, '#ffd166', this.rule.radius);
       for (const target of this.world.enemies) {

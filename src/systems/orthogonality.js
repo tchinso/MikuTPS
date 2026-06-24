@@ -22,6 +22,12 @@ export function auditOrthogonality(characterList = characters, stageList = stage
   for (const character of characterList) {
     if ((usage[character.id] ?? 0) < 3) issues.push(`${character.id}: 유력 스테이지가 3개 미만입니다.`);
   }
+  const usageValues = Object.values(usage);
+  const usageMin = Math.min(...usageValues);
+  const usageMax = Math.max(...usageValues);
+  if (usageMin < 9 || usageMax > 13 || usageMax - usageMin > 4) {
+    issues.push(`추천 분포 편차가 큽니다 (최소 ${usageMin}, 최대 ${usageMax}).`);
+  }
 
   const soloOptimal = stageList.filter((stage) => new Set(stage.recommendedCharacters).size === 1);
   const soloShare = Object.fromEntries(characterList.map(({ id }) => [
@@ -32,5 +38,5 @@ export function auditOrthogonality(characterList = characters, stageList = stage
     if (share > 0.3) issues.push(`${id}: 단독 최적 비율이 30%를 초과합니다.`);
   }
 
-  return { ok: issues.length === 0, issues, usage, soloShare };
+  return { ok: issues.length === 0, issues, usage, usageRange: { min: usageMin, max: usageMax }, soloShare };
 }
