@@ -44,8 +44,8 @@ jobs:
       - name: Build static site
         run: pnpm build
 
-      - name: Verify GitHub Pages artifact paths
-        run: pnpm verify:pages
+      - name: Verify static Pages artifact paths
+        run: pnpm verify:deploy
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

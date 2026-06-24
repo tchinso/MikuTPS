@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  // Relative URLs work for both https://user.github.io/MikuTPS/ and custom domains.
+  // Relative URLs work at both GitHub Pages subpaths and Cloudflare Pages roots.
   base: './',
   build: {
     target: 'es2022',

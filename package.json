@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "verify:pages": "node scripts/verify-pages-build.mjs",
+    "build:pages": "pnpm build && pnpm verify:deploy",
+    "verify:deploy": "node scripts/verify-static-build.mjs",
+    "verify:pages": "pnpm verify:deploy",
     "audit:release": "node scripts/release-readiness.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",

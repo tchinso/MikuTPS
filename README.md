@@ -32,7 +32,7 @@ pnpm dev
 ```powershell
 pnpm test
 pnpm build
-pnpm verify:pages
+pnpm verify:deploy
 pnpm audit:release
 ```
 
@@ -49,6 +49,19 @@ pnpm audit:release
 5. `dist`를 GitHub Pages 아티팩트로 배포
 
 저장소의 **Settings → Pages → Source**는 `GitHub Actions`로 설정합니다. 빌드는 상대 URL을 사용하므로 `https://사용자.github.io/MikuTPS/`, 다른 저장소 이름, 커스텀 도메인에서 동일한 `dist`를 호스팅할 수 있습니다.
+
+## Cloudflare Pages 배포
+
+Cloudflare Pages에서 GitHub 저장소를 연결한 뒤 다음 값으로 프로젝트를 생성합니다.
+
+- 프로덕션 브랜치: `main`
+- 프레임워크 프리셋: `Vite` (목록에 없으면 `None`)
+- 빌드 명령: `pnpm build:pages`
+- 빌드 출력 디렉터리: `dist`
+- 루트 디렉터리: 비워 둠 (저장소 루트)
+- 환경 변수: `PNPM_VERSION=11.7.0` (Production과 Preview 모두)
+
+Node.js는 저장소의 `.node-version`으로 `22.16.0`을 사용합니다. 별도의 API 키나 런타임 환경 변수는 필요하지 않습니다. `base: './'`과 상대 웹앱 매니페스트 경로 덕분에 GitHub Pages의 `/MikuTPS/` 하위 경로와 Cloudflare Pages의 루트 경로에서 같은 `dist`가 작동합니다.
 
 ## 자산
 
